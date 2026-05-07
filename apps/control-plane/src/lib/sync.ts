@@ -140,7 +140,7 @@ export async function buildNodeConfig(nodeId: number) {
       continue;
     }
 
-    const { spec, operationKeyToEndpointId } = specResult;
+    const { spec, operationKeyToEndpointId, operationKeyToScheme } = specResult;
     const parsedSpec = extractGatewaySpec(spec);
     const faremeterSpec = extractSpec(spec);
 
@@ -150,7 +150,11 @@ export async function buildNodeConfig(nodeId: number) {
     const assets = [
       ...new Set(Object.values(faremeterSpec.assets).map((a) => a.token)),
     ];
-    const capabilities = { schemes: ["exact"], networks, assets };
+    const capabilities = {
+      schemes: [...new Set(Object.values(operationKeyToScheme))],
+      networks,
+      assets,
+    };
 
     const extraDirectives: string[] = [];
     if (tenant.upstream_auth_header && tenant.upstream_auth_value) {
@@ -207,6 +211,7 @@ export async function buildNodeConfig(nodeId: number) {
       sidecarPrefix: gatewaySlug,
       baseURL,
       operationKeyToEndpointId,
+      operationKeyToScheme,
       capabilities,
     };
 
@@ -215,6 +220,7 @@ export async function buildNodeConfig(nodeId: number) {
       baseURL,
       capabilities,
       operationKeyToEndpointId,
+      operationKeyToScheme,
       tenantName: tenant.name,
       orgSlug: tenant.org_slug,
     };

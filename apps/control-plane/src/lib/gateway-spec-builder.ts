@@ -50,6 +50,7 @@ export type GatewaySpecResult = {
   spec: Record<string, unknown>;
   warnings: string[];
   operationKeyToEndpointId: Record<string, number>;
+  operationKeyToScheme: Record<string, PricedX402Scheme>;
 };
 
 type TokenPriceRow = {
@@ -71,6 +72,29 @@ type EndpointRow = {
   description: string | null;
   http_method: string;
 };
+
+export type PricedX402Scheme = "exact" | "flex";
+export type EndpointScheme = PricedX402Scheme | "free";
+
+const DEFAULT_X402_SCHEME: PricedX402Scheme = "exact";
+const PRICED_X402_SCHEMES = new Set<string>(["exact", "flex"]);
+
+export function isPricedX402Scheme(
+  scheme: string | null | undefined,
+): scheme is PricedX402Scheme {
+  return (
+    scheme !== null && scheme !== undefined && PRICED_X402_SCHEMES.has(scheme)
+  );
+}
+
+export function resolveEndpointScheme(
+  endpointScheme: string | null,
+  defaultScheme: string | null | undefined,
+): EndpointScheme {
+  const scheme = endpointScheme ?? defaultScheme ?? DEFAULT_X402_SCHEME;
+  if (scheme === "free" || isPricedX402Scheme(scheme)) return scheme;
+  return DEFAULT_X402_SCHEME;
+}
 
 export type GatewaySpecInput = {
   tenantId: number;
@@ -94,7 +118,6 @@ export function buildTenantGatewaySpecFromData(
 
   const walletConfig: GatewayWalletConfig = walletConfigParsed;
   const { endpoints, tokenPrices } = input;
-  const defaultScheme = input.defaultScheme ?? "exact";
   const warnings: string[] = [];
 
   // Build x-faremeter-assets from tenant-level token prices (endpoint_id IS NULL)
@@ -134,13 +157,11 @@ export function buildTenantGatewaySpecFromData(
 
   const paths: Record<string, unknown> = {};
   const operationKeyToEndpointId: Record<string, number> = {};
+  const operationKeyToScheme: Record<string, PricedX402Scheme> = {};
 
   for (const endpoint of endpoints) {
-    const effectiveEndpoint = {
-      ...endpoint,
-      scheme: endpoint.scheme ?? defaultScheme,
-    };
-    const scheme = effectiveEndpoint.scheme;
+    const scheme = resolveEndpointScheme(endpoint.scheme, input.defaultScheme);
+    const effectiveEndpoint = { ...endpoint, scheme };
 
     // Free endpoints are excluded — handled by the catch-all
     if (scheme === "free") continue;
@@ -214,6 +235,7 @@ export function buildTenantGatewaySpecFromData(
         paths[openApiPath] = existing;
 
         operationKeyToEndpointId[operationKey] = endpoint.id;
+        operationKeyToScheme[operationKey] = scheme;
       }
     }
   }
@@ -237,7 +259,7 @@ export function buildTenantGatewaySpecFromData(
     paths,
   };
 
-  return { spec, warnings, operationKeyToEndpointId };
+  return { spec, warnings, operationKeyToEndpointId, operationKeyToScheme };
 }
 
 export async function buildTenantGatewaySpec(
@@ -310,8 +332,8 @@ function buildPricingRules(
   };
   const scheme = endpoint.scheme;
 
-  if (scheme !== "exact") {
-    // Only exact scheme produces one-phase pricing rules in this builder
+  if (scheme !== "exact" && scheme !== "flex") {
+    // Only priced x402 schemes produce one-phase pricing rules in this builder.
     return result;
   }
 
@@ -351,7 +373,7 @@ function buildPricingRules(
 
     if (endpointMultiplier === 0) {
       result.warnings.push(
-        `Endpoint ${endpoint.id}: scheme is "exact" but price is 0 — endpoint will be routed through the payment flow but capture nothing; use scheme "free" to mark it as free`,
+        `Endpoint ${endpoint.id}: scheme is "${scheme}" but price is 0 — endpoint will be routed through the payment flow but capture nothing; use scheme "free" to mark it as free`,
       );
     }
 

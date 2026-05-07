@@ -13,7 +13,8 @@
     "@faremeter/middleware-openapi": "catalog:",
     "@faremeter/info": "catalog:",
     "@faremeter/types": "catalog:",
-    "@hono/node-server": "catalog:"
+    "@hono/node-server": "catalog:",
+    "hono": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

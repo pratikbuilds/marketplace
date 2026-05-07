@@ -19,6 +19,14 @@ import { createApp } from "@faremeter/sidecar/app";
 import { wrap } from "@faremeter/fetch";
 import { client } from "@faremeter/types";
 import { normalizeNetworkId } from "@faremeter/info";
+import type { PaymentHandler } from "@faremeter/types/client";
+import type { FacilitatorHandler } from "@faremeter/types/facilitator";
+import type {
+  x402PaymentPayload,
+  x402PaymentRequirements,
+  x402SettleResponse,
+  x402VerifyResponse,
+} from "@faremeter/types/x402v2";
 
 $.verbose = false;
 
@@ -31,6 +39,9 @@ const UPSTREAM_PORT = 4110;
 const NGINX_PORT = 8090;
 const NGINX_BASE = `http://127.0.0.1:${NGINX_PORT}`;
 const TMP_DIR = join(MARKETPLACE_ROOT, "tmp", "gateway-nginx-prototype-test");
+const FLEX_SCHEME = "flex";
+const FLEX_NETWORK = "test-local";
+const FLEX_ASSET = "TEST";
 
 if (!existsSync(FAREMETER_ROOT)) {
   throw new Error(
@@ -116,6 +127,13 @@ const tenantConfig: TenantConfig = {
       price: "200",
       scheme: "exact",
       priority: 20,
+    },
+    {
+      id: 4,
+      path: "/v1/flex/completions",
+      price: "700",
+      scheme: "flex",
+      priority: 30,
     },
     { id: 3, path: "/health", price: "0", scheme: "free", priority: 5 },
   ],
@@ -269,6 +287,15 @@ function createMockUpstream(): Hono {
     }),
   );
 
+  app.post("/v1/flex/completions", (c) =>
+    c.json({
+      id: "chatcmpl-flex-001",
+      object: "chat.completion",
+      choices: [{ message: { role: "assistant", content: "Hello flex" } }],
+      usage: { prompt_tokens: 8, completion_tokens: 12, total_tokens: 20 },
+    }),
+  );
+
   app.get("/health", (c) => c.json({ status: "ok" }));
 
   return app;
@@ -281,7 +308,16 @@ type Waiter = {
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 };
-type PaymentRecord = { requirementsAmount: string; network: string };
+type PaymentRecord = {
+  requirementsAmount: string;
+  network: string;
+  scheme: string;
+};
+type TestFlexPaymentPayload = {
+  testId: string;
+  amount: string;
+  timestamp: number;
+};
 
 type Callbacks = {
   x402VerifyCount: number;
@@ -366,6 +402,7 @@ function createCallbacks(): {
       cb.x402VerifyRecords.push({
         requirementsAmount: requirements.amount,
         network: requirements.network,
+        scheme: requirements.scheme,
       });
     },
     onX402Settle: (requirements) => {
@@ -373,6 +410,7 @@ function createCallbacks(): {
       cb.x402SettleRecords.push({
         requirementsAmount: requirements.amount,
         network: requirements.network,
+        scheme: requirements.scheme,
       });
       if (cb.x402SettleCount > 0 && cb.captures.size > 0 && settleWaiter) {
         clearTimeout(settleWaiter.timer);
@@ -412,6 +450,144 @@ function requireCapture(cb: Callbacks, operationKey: string): CaptureResponse {
   return cap;
 }
 
+function isFlexRequirement(requirement: {
+  scheme: string;
+  network: string;
+}): boolean {
+  return (
+    requirement.scheme.toLowerCase() === FLEX_SCHEME &&
+    requirement.network.toLowerCase() === FLEX_NETWORK
+  );
+}
+
+function isFlexPayload(raw: unknown): raw is TestFlexPaymentPayload {
+  if (typeof raw !== "object" || raw === null) return false;
+  const obj = raw as Record<string, unknown>;
+  return (
+    typeof obj.testId === "string" &&
+    typeof obj.amount === "string" &&
+    typeof obj.timestamp === "number"
+  );
+}
+
+function createTestFlexPaymentHandler(): PaymentHandler {
+  return async (_context, accepts) =>
+    accepts.filter(isFlexRequirement).map((requirements) => ({
+      requirements,
+      exec: async () => ({
+        payload: {
+          testId: `flex-${Date.now()}`,
+          amount: requirements.amount,
+          timestamp: Date.now(),
+        },
+      }),
+    }));
+}
+
+function createTestFlexFacilitatorHandler(opts: {
+  payTo: string;
+  onVerify: VerifyCallback;
+  onSettle: SettleCallback;
+}): FacilitatorHandler {
+  const getRequirements = async ({
+    accepts,
+  }: {
+    accepts: x402PaymentRequirements[];
+  }): Promise<x402PaymentRequirements[]> =>
+    accepts.filter(isFlexRequirement).map((requirement) => ({
+      ...requirement,
+      asset: requirement.asset || FLEX_ASSET,
+      payTo: requirement.payTo || opts.payTo,
+      maxTimeoutSeconds: requirement.maxTimeoutSeconds ?? 300,
+    }));
+
+  function validate(
+    requirements: x402PaymentRequirements,
+    payment: x402PaymentPayload,
+  ): TestFlexPaymentPayload | string {
+    if (!isFlexRequirement(requirements)) {
+      return "Not a flex requirement";
+    }
+    if (!isFlexPayload(payment.payload)) {
+      return "Invalid flex test payload";
+    }
+    if (payment.payload.amount !== requirements.amount) {
+      return "Amount mismatch";
+    }
+    if (requirements.payTo.toLowerCase() !== opts.payTo.toLowerCase()) {
+      return "Payment to wrong address";
+    }
+    return payment.payload;
+  }
+
+  return {
+    capabilities: {
+      schemes: [FLEX_SCHEME],
+      networks: [FLEX_NETWORK],
+      assets: [FLEX_ASSET],
+    },
+    getSupported: () => [
+      Promise.resolve({
+        x402Version: 2,
+        scheme: FLEX_SCHEME,
+        network: FLEX_NETWORK,
+      }),
+    ],
+    getRequirements,
+    handleVerify: async (
+      requirements,
+      payment,
+    ): Promise<x402VerifyResponse | null> => {
+      const result = validate(requirements, payment);
+      if (typeof result === "string") {
+        return isFlexRequirement(requirements)
+          ? { isValid: false, invalidReason: result }
+          : null;
+      }
+      opts.onVerify(requirements, payment, result);
+      return { isValid: true, payer: "test-flex-payer" };
+    },
+    handleSettle: async (
+      requirements,
+      payment,
+    ): Promise<x402SettleResponse | null> => {
+      const result = validate(requirements, payment);
+      if (typeof result === "string") {
+        return isFlexRequirement(requirements)
+          ? {
+              success: false,
+              errorReason: result,
+              transaction: "",
+              network: requirements.network,
+              payer: "",
+            }
+          : null;
+      }
+      opts.onSettle(requirements, payment, result);
+      return {
+        success: true,
+        transaction: `test-flex-tx-${result.testId}`,
+        network: FLEX_NETWORK,
+        payer: "test-flex-payer",
+      };
+    },
+  };
+}
+
+function getAccepts(body: unknown): x402PaymentRequirements[] {
+  if (typeof body !== "object" || body === null || !("accepts" in body)) {
+    return [];
+  }
+  const accepts = body.accepts;
+  if (!Array.isArray(accepts)) {
+    return [];
+  }
+  return accepts.filter(
+    (item): item is x402PaymentRequirements =>
+      typeof item === "object" && item !== null,
+  );
+}
+
 // -- Test suite --
 
 await t.test("gateway-nginx marketplace prototype", async (t) => {
@@ -446,6 +622,11 @@ await t.test("gateway-nginx marketplace prototype", async (t) => {
       createTestFacilitatorHandler({
         payTo: "test-receiver",
         amountPolicy: (settle, signed) => settle <= signed,
+        onVerify: onX402Verify,
+        onSettle: onX402Settle,
+      }),
+      createTestFlexFacilitatorHandler({
+        payTo: "test-receiver",
         onVerify: onX402Verify,
         onSettle: onX402Settle,
       }),
@@ -498,6 +679,11 @@ await t.test("gateway-nginx marketplace prototype", async (t) => {
   const mppFetch = wrap(fetch, {
     handlers: [],
     mppHandlers: [createTestMPPPaymentHandler()],
+    retryCount: 0,
+  });
+
+  const flexFetch = wrap(fetch, {
+    handlers: [createTestFlexPaymentHandler()],
     retryCount: 0,
   });
 
@@ -679,9 +865,60 @@ await t.test("gateway-nginx marketplace prototype", async (t) => {
     },
   );
 
-  // -- MPP two-phase: settle and capture at access (no verify) --
+  await t.test("flex endpoint without payment returns flex 402", async (t) => {
+    cb.reset();
+    const res = await fetch(`${NGINX_BASE}/v1/flex/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "flex-demo", messages: [] }),
+    });
+    t.equal(res.status, 402);
+    const accepts = getAccepts(await res.json());
+    t.ok(
+      accepts.some((requirement) => requirement.scheme === FLEX_SCHEME),
+      "402 accepts must include flex",
+    );
+    t.end();
+  });
 
-  await t.test("MPP charge: settle and capture at access phase", async (t) => {
+  await t.test("flex endpoint verifies and settles as flex", async (t) => {
+    cb.reset();
+    const res = await flexFetch(`${NGINX_BASE}/v1/flex/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "flex-demo", messages: [] }),
+    });
+
+    t.equal(res.status, 200);
+    t.equal(cb.x402VerifyRecords.length, 1);
+    const vr = requireRecord(cb.x402VerifyRecords, "flex verify");
+    t.equal(vr.scheme, FLEX_SCHEME, "verify must use flex scheme");
+    t.equal(vr.requirementsAmount, "700");
+    t.equal(vr.network, FLEX_NETWORK);
+    t.equal(cb.x402SettleCount, 0, "settle must not fire before log phase");
+
+    const body = (await res.json()) as { object: string };
+    t.equal(body.object, "chat.completion");
+
+    await cb.awaitX402Settle();
+    t.equal(cb.x402SettleRecords.length, 1);
+    const sr = requireRecord(cb.x402SettleRecords, "flex settle");
+    t.equal(sr.scheme, FLEX_SCHEME, "settle must use flex scheme");
+    t.equal(sr.requirementsAmount, "700");
+    t.equal(sr.network, FLEX_NETWORK);
+
+    const cap = requireCapture(cb, "POST /v1/flex/completions");
+    t.equal(cap.settled, true, "flex settlement must succeed");
+    t.equal(cap.amount.usdc, "700");
+    t.equal(cap.request.method, "POST");
+    t.equal(cap.request.path, "/v1/flex/completions");
+    t.ok(cap.request.headers["x-request-id"]);
+    t.end();
+  });
+
+  // -- MPP payment path stays isolated from x402 handlers --
+
+  await t.test("MPP charge: records MPP capture without x402", async (t) => {
     cb.reset();
     const res = await mppFetch(`${NGINX_BASE}/v1/chat/completions`, {
       method: "POST",
@@ -689,10 +926,6 @@ await t.test("gateway-nginx marketplace prototype", async (t) => {
       body: JSON.stringify({ model: "gpt-3.5", messages: [] }),
     });
     t.equal(res.status, 200);
-    t.ok(
-      cb.mppSettleCount > 0,
-      "MPP settle must fire at access phase for two-phase pricing",
-    );
     t.equal(cb.x402VerifyCount, 0, "x402 verify must not fire for MPP payment");
     t.equal(cb.x402SettleCount, 0, "x402 settle must not fire for MPP payment");
 
@@ -701,6 +934,7 @@ await t.test("gateway-nginx marketplace prototype", async (t) => {
 
     await cb.awaitCapture("POST /v1/chat/completions");
     const cap = requireCapture(cb, "POST /v1/chat/completions");
+    t.equal(cap.payment?.protocol, "mpp", "capture must record MPP payment");
     t.equal(cap.settled, true, "capture must show successful settlement");
     t.equal(
       cap.amount.usdc,

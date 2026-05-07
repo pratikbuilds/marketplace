@@ -123,9 +123,14 @@ function extractPathsFromSpec(spec: OpenApiSpec): ExtractedPath[] {
       ] as const;
       for (const method of methods) {
         const op = item[method];
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty summary must fall through to description
-        if (op?.summary || op?.description) {
-          description = op.summary || op.description || null;
+        const summary = op?.summary;
+        const opDescription = op?.description;
+        if (summary) {
+          description = summary;
+          break;
+        }
+        if (opDescription) {
+          description = opDescription;
           break;
         }
       }

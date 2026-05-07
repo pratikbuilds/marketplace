@@ -34,6 +34,7 @@ async function createTenant(
   orgId: number,
   name: string,
   walletId: number | null,
+  opts: { defaultScheme?: string | null } = {},
 ) {
   return db
     .insertInto("tenants")
@@ -42,7 +43,7 @@ async function createTenant(
       organization_id: orgId,
       backend_url: "http://backend.example.test",
       default_price: 0.01,
-      default_scheme: "exact",
+      default_scheme: opts.defaultScheme ?? "exact",
       wallet_id: walletId,
       status: "active",
       is_active: true,
@@ -70,7 +71,7 @@ async function createEndpoint(
       path,
       path_pattern: path,
       price: opts.price ?? null,
-      scheme: opts.scheme ?? "exact",
+      scheme: opts.scheme === undefined ? "exact" : opts.scheme,
       priority: opts.priority ?? 100,
       is_active: true,
       openapi_source_paths: opts.openapi_source_paths ?? undefined,
@@ -225,6 +226,41 @@ await t.test(
     const rules = pricing.rules as Record<string, unknown>[];
 
     t.matchOnly(rules, [{ match: "true", capture: "90000" }]);
+  },
+);
+
+await t.test(
+  "endpoint with null scheme inherits tenant default flex pricing",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { "mainnet-beta": { address: "SoLwALLeTaDdReSs123" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const tenant = await createTenant(org.id, "default-flex-api", wallet.id, {
+      defaultScheme: "flex",
+    });
+
+    await createEndpoint(tenant.id, "/v1/flex/completions", {
+      scheme: null,
+    });
+    await createTokenPrice(tenant.id, null, {
+      amount: 1000,
+    });
+
+    const result = await buildTenantGatewaySpec(tenant.id);
+    t.not(result, null);
+    if (!result) return;
+
+    const paths = result.spec.paths as Record<string, Record<string, unknown>>;
+    const route = paths["/v1/flex/completions"];
+    t.ok(route);
+
+    const post = route?.post as Record<string, unknown>;
+    const pricing = post["x-faremeter-pricing"] as Record<string, unknown>;
+    const rules = pricing.rules as Record<string, unknown>[];
+
+    t.matchOnly(rules, [{ match: "true", capture: "1000" }]);
   },
 );
 
@@ -505,7 +541,7 @@ await t.test(
   },
 );
 
-await t.test("non-exact scheme produces no pricing rules", async (t) => {
+await t.test("flex scheme produces pricing rules", async (t) => {
   const org = await createOrg("Team", "team");
   const walletConfig = {
     solana: { "mainnet-beta": { address: "addr1" } },
@@ -526,7 +562,10 @@ await t.test("non-exact scheme produces no pricing rules", async (t) => {
   const paths = result.spec.paths as Record<string, unknown>;
   const pathEntry = paths["/flex-endpoint"] as Record<string, unknown>;
   const getOp = pathEntry.get as Record<string, unknown>;
-  t.notOk(getOp["x-faremeter-pricing"]);
+  const pricing = getOp["x-faremeter-pricing"] as Record<string, unknown>;
+  const rules = pricing.rules as Record<string, unknown>[];
+
+  t.matchOnly(rules, [{ match: "true", capture: "5000000" }]);
 });
 
 await t.test(

@@ -251,6 +251,103 @@ await t.test(
 );
 
 await t.test(
+  "flex-only tenant populates pricing and flex sidecar capabilities",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { "mainnet-beta": { address: "SoLAddr123" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const node = await createNode("node-1");
+    const tenant = await createTenant(org.id, "flex-api", wallet.id, {
+      org_slug: "team",
+    });
+    await linkTenantToNode(tenant.id, node.id);
+    await createEndpoint(tenant.id, "/v1/flex/completions", {
+      scheme: "flex",
+    });
+    await createTokenPrice(tenant.id, null, { amount: 10000 });
+
+    const result = await buildNodeConfig(node.id);
+    t.not(result, null);
+    if (!result) return;
+
+    const site = result.sidecar.sites["team--flex-api"] as Record<
+      string,
+      unknown
+    >;
+    t.ok(site, "sidecar entry exists");
+    t.same(site.capabilities, {
+      schemes: ["flex"],
+      networks: ["solana-mainnet-beta"],
+      assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
+    });
+    t.match(site.operationKeyToScheme, {
+      "POST /v1/flex/completions": "flex",
+    });
+
+    const spec = site.spec as Record<string, unknown>;
+    const paths = spec.paths as Record<string, Record<string, unknown>>;
+    const post = paths["/v1/flex/completions"]?.post as
+      | Record<string, unknown>
+      | undefined;
+    t.ok(post, "flex endpoint should be emitted as a POST operation");
+    if (!post) return;
+
+    const pricing = post["x-faremeter-pricing"] as
+      | { rules: Record<string, unknown>[] }
+      | undefined;
+    t.ok(pricing, "flex endpoint should have gateway pricing");
+    t.matchOnly(pricing?.rules, [{ match: "true", capture: "10000" }]);
+  },
+);
+
+await t.test(
+  "mixed exact and flex tenant records per-operation schemes",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { "mainnet-beta": { address: "SoLAddr123" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const node = await createNode("node-1");
+    const tenant = await createTenant(org.id, "mixed-api", wallet.id, {
+      org_slug: "team",
+    });
+    await linkTenantToNode(tenant.id, node.id);
+    await createEndpoint(tenant.id, "/v1/chat/completions", {
+      scheme: "exact",
+    });
+    await createEndpoint(tenant.id, "/v1/flex/completions", {
+      scheme: "flex",
+    });
+    await createTokenPrice(tenant.id, null, { amount: 10000 });
+
+    const result = await buildNodeConfig(node.id);
+    t.not(result, null);
+    if (!result) return;
+
+    const site = result.sidecar.sites["team--mixed-api"] as Record<
+      string,
+      unknown
+    >;
+    t.ok(site, "sidecar entry exists");
+    t.same(site.capabilities, {
+      schemes: ["exact", "flex"],
+      networks: ["solana-mainnet-beta"],
+      assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
+    });
+    t.match(site.operationKeyToScheme, {
+      "POST /v1/chat/completions": "exact",
+      "POST /v1/flex/completions": "flex",
+    });
+
+    const gw = result.gateway["team--mixed-api"] as Record<string, unknown>;
+    t.same(gw.operationKeyToScheme, site.operationKeyToScheme);
+  },
+);
+
+await t.test(
   "upstream auth header is injected into gateway locations via extraDirectives",
   async (t) => {
     const org = await createOrg("Team", "team");

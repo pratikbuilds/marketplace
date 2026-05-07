@@ -101,7 +101,7 @@ function WalletSetupModal({
       return;
     }
     let cancelled = false;
-    deriveSolanaAddress(solanaKey).then((result) => {
+    void deriveSolanaAddress(solanaKey).then((result) => {
       if (!cancelled) setSolanaDerivation(result);
     });
     return () => {

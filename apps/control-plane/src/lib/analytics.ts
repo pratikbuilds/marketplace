@@ -95,8 +95,7 @@ async function getFilteredEarnings(
 ): Promise<EarningsAnalytics> {
   const { currentMonthStart, previousMonthStart } = getMonthBoundaries();
 
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-conversion -- pg driver returns bigint aggregates as strings despite Kysely's sql<number> annotation
-  const toSubs = (rows: { symbol: string; total: number }[]) =>
+  const toSubs = (rows: { symbol: string; total: number | string }[]) =>
     rows.map((r) => ({ symbol: r.symbol, total: Number(r.total) }));
 
   const base = () => filter(db.selectFrom("transactions"));
