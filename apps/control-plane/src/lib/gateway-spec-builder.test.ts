@@ -74,7 +74,7 @@ async function createEndpoint(
       path,
       path_pattern: path,
       price: opts.price ?? null,
-      scheme: opts.scheme ?? "exact",
+      scheme: opts.scheme === undefined ? "exact" : opts.scheme,
       priority: opts.priority ?? 100,
       is_active: true,
       openapi_source_paths: opts.openapi_source_paths ?? undefined,
@@ -559,7 +559,7 @@ await t.test("flex tenant paid endpoint produces pricing rules", async (t) => {
 });
 
 await t.test(
-  "imported OpenAPI authorize and capture pricing is preserved",
+  "imported OpenAPI authorize and capture pricing is preserved and marks operation flex",
   async (t) => {
     const org = await createOrg("Team", "team");
     const walletConfig = {
@@ -577,7 +577,10 @@ await t.test(
           recipient: "recipient1",
         },
       },
-      "x-faremeter-pricing": { rates: { "usdc-sol": 1 } },
+      "x-faremeter-pricing": {
+        rates: { "usdc-sol": 1 },
+        rules: [{ match: "$", capture: "10000" }],
+      },
       paths: {
         "/v1/chat/completions": {
           post: {
@@ -598,7 +601,7 @@ await t.test(
       },
     };
     const tenant = await createTenant(org.id, "dynamic-flex", wallet.id, {
-      defaultScheme: "flex",
+      defaultScheme: "exact",
       openapiSpec: importedSpec,
     });
 
@@ -606,6 +609,7 @@ await t.test(
       openapi_source_paths: ["/v1/chat/completions"],
       http_method: "POST",
       price: 1,
+      scheme: null,
     });
     await createTokenPrice(tenant.id, null, {
       network: "solana-devnet",
@@ -616,11 +620,11 @@ await t.test(
     t.not(result, null);
     if (!result) return;
 
-    t.match(result.warnings, [
-      `Endpoint ${endpoint.id}: pricing for "POST /v1/chat/completions" sourced from imported OpenAPI spec — marketplace token prices ignored for this operation`,
-    ]);
     t.same(result.operationKeyToEndpointId, {
       "POST /v1/chat/completions": endpoint.id,
+    });
+    t.same(result.operationKeyToScheme, {
+      "POST /v1/chat/completions": "flex",
     });
     t.equal(
       (result.spec.info as Record<string, unknown>).title,
@@ -637,6 +641,7 @@ await t.test(
       unknown
     >;
     t.matchOnly(rootPricing.rates, { "solana-devnet-USDC": 1 });
+    t.same(rootPricing.rules, importedSpec["x-faremeter-pricing"].rules);
 
     const paths = result.spec.paths as Record<string, unknown>;
     const pathEntry = paths["/v1/chat/completions"] as Record<string, unknown>;

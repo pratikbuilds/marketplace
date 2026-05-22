@@ -11,6 +11,7 @@ interface OpenApiImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tenantId: number;
+  defaultScheme: string;
   onSuccess: () => void;
 }
 
@@ -28,6 +29,7 @@ export function OpenApiImportDialog({
   open,
   onOpenChange,
   tenantId,
+  defaultScheme,
   onSuccess,
 }: OpenApiImportDialogProps) {
   const [mode, setMode] = useState<"upload" | "paste">("upload");
@@ -43,6 +45,10 @@ export function OpenApiImportDialog({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const { toast } = useToast();
   const parseIdRef = useRef(0);
+  const importingOverFlexPricing =
+    defaultScheme === "flex" &&
+    parsedSpec !== null &&
+    !hasRootPricingExtension(parsedSpec.spec);
 
   const handleParse = useCallback(async (text: string) => {
     setParseErrors([]);
@@ -305,6 +311,18 @@ export function OpenApiImportDialog({
                 </div>
               )}
 
+              {importingOverFlexPricing && (
+                <div className="rounded-md border border-yellow-800 bg-yellow-900/20 p-3">
+                  <p className="text-sm font-medium text-yellow-400">
+                    This proxy uses Flex pricing
+                  </p>
+                  <p className="mt-1 text-xs text-yellow-200/80">
+                    This spec does not include root pricing rules. Review Flex
+                    pricing after import.
+                  </p>
+                </div>
+              )}
+
               <div className="flex justify-end gap-3">
                 <button
                   type="button"
@@ -326,5 +344,13 @@ export function OpenApiImportDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+function hasRootPricingExtension(spec: unknown) {
+  return (
+    typeof spec === "object" &&
+    spec !== null &&
+    Object.hasOwn(spec, "x-faremeter-pricing")
   );
 }

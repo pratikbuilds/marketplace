@@ -142,7 +142,7 @@ export async function buildNodeConfig(nodeId: number) {
       continue;
     }
 
-    const { spec, operationKeyToEndpointId } = specResult;
+    const { spec, operationKeyToEndpointId, operationKeyToScheme } = specResult;
     const parsedSpec = extractGatewaySpec(spec);
     const faremeterSpec = extractSpec(spec);
 
@@ -152,8 +152,12 @@ export async function buildNodeConfig(nodeId: number) {
     const assets = [
       ...new Set(Object.values(faremeterSpec.assets).map((a) => a.token)),
     ];
+    const schemes =
+      Object.keys(operationKeyToScheme).length > 0
+        ? [...new Set(Object.values(operationKeyToScheme))]
+        : [tenant.default_scheme ?? "exact"];
     const capabilities = {
-      schemes: [tenant.default_scheme ?? "exact"],
+      schemes,
       networks,
       assets,
     };

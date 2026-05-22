@@ -1473,6 +1473,38 @@ await t.test("POST /api/admin/tenants", async (t) => {
     t.equal(data.name, "new-tenant");
   });
 
+  await t.test("persists root pricing rules on tenant creation", async (t) => {
+    const admin = await createUser("admin@example.com", true);
+    const org = await createOrg("Team", "team");
+    const rules = [{ match: "$", capture: "10000" }];
+
+    const res = await app.request("/api/admin/tenants", {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${admin.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "flex-root-tenant",
+        backend_url: "http://backend.example.com",
+        organization_id: org.id,
+        default_scheme: "flex",
+        pricing_rules: rules,
+      }),
+    });
+
+    t.equal(res.status, 201);
+    const data = TenantResponse.assert(await res.json());
+    const tenant = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", data.id)
+      .executeTakeFirstOrThrow();
+    const spec = tenant.openapi_spec as Record<string, unknown>;
+    const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
+    t.same(pricing.rules, rules);
+  });
+
   await t.test("rejects invalid tenant name", async (t) => {
     const admin = await createUser("admin@example.com", true);
 

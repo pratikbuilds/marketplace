@@ -32,6 +32,10 @@ import {
 } from "../lib/faremeter-dash.js";
 import { validateProxyName } from "../lib/proxy-name.js";
 import { parsePagination } from "../lib/validation.js";
+import {
+  createOpenApiSpecWithRootPricingRules,
+  validateSpecPricingRules,
+} from "../lib/pricing-rules.js";
 import { arktypeValidator } from "@hono/arktype-validator";
 import {
   AdminCreateTenantSchema,
@@ -760,6 +764,20 @@ adminRoutes.post(
       orgSlug = org.slug;
     }
 
+    const rootPricingSpec =
+      body.pricing_rules !== undefined
+        ? createOpenApiSpecWithRootPricingRules(
+            sanitizedName,
+            body.pricing_rules,
+          )
+        : null;
+    if (rootPricingSpec) {
+      const validationError = validateSpecPricingRules(rootPricingSpec);
+      if (validationError) {
+        return c.json({ error: validationError }, 400);
+      }
+    }
+
     const tenant = await db.transaction().execute(async (trx) => {
       const t = await trx
         .insertInto("tenants")
@@ -773,6 +791,9 @@ adminRoutes.post(
           upstream_auth_header: body.upstream_auth_header ?? null,
           upstream_auth_value: body.upstream_auth_value ?? null,
           org_slug: orgSlug,
+          ...(rootPricingSpec !== null && {
+            openapi_spec: JSON.stringify(rootPricingSpec),
+          }),
           is_active: !isRegisterOnly,
           status: isRegisterOnly ? "registered" : "pending",
           tags: body.tags ?? [],

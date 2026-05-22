@@ -7,9 +7,12 @@ import {
   Link2Icon,
   ExclamationTriangleIcon,
   TrashIcon,
+  Pencil1Icon,
 } from "@radix-ui/react-icons";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
+import { AdminEditEndpointDialog } from "./admin-edit-endpoint-dialog";
+import { RootPricingRulesDialog } from "@/components/proxy-endpoints/root-pricing-rules-dialog";
 import { InlinePriceEdit } from "@/components/shared/inline-price-edit";
 import { InlineSchemeEdit } from "@/components/shared/inline-scheme-edit";
 import { useToast } from "@/components/ui/toast";
@@ -25,6 +28,7 @@ interface Endpoint {
   priority: number;
   openapi_source_paths: string[] | null;
   is_active: boolean;
+  tags: string[];
   created_at: string;
 }
 
@@ -72,6 +76,14 @@ export function OrgEndpointsTable({
   const { toast } = useToast();
   const [endpointToDelete, setEndpointToDelete] =
     useState<EndpointWithTenant | null>(null);
+  const [editingEndpoint, setEditingEndpoint] =
+    useState<EndpointWithTenant | null>(null);
+  const [editingInitialScheme, setEditingInitialScheme] = useState<
+    string | undefined
+  >(undefined);
+  const [rootPricingTenant, setRootPricingTenant] = useState<Tenant | null>(
+    null,
+  );
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Create a stable key from tenant IDs
@@ -191,20 +203,33 @@ export function OrgEndpointsTable({
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <InlinePriceEdit
-                      priceMicro={tenant.default_price}
-                      onUpdate={() => {
-                        void mutate();
-                        onUpdate?.();
-                      }}
-                      apiEndpoint={`/api/admin/tenants/${tenant.id}`}
-                      fieldName="default_price"
-                      label="Default Price"
-                    />
-                    {tenant.default_price === 0 && (
-                      <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-                        Free
-                      </span>
+                    {tenant.default_scheme === "flex" ? (
+                      <button
+                        type="button"
+                        onClick={() => setRootPricingTenant(tenant)}
+                        className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+                      >
+                        Dynamic
+                        <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                      </button>
+                    ) : (
+                      <>
+                        <InlinePriceEdit
+                          priceMicro={tenant.default_price}
+                          onUpdate={() => {
+                            void mutate();
+                            onUpdate?.();
+                          }}
+                          apiEndpoint={`/api/admin/tenants/${tenant.id}`}
+                          fieldName="default_price"
+                          label="Default Price"
+                        />
+                        {tenant.default_price === 0 && (
+                          <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                            Free
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </td>
@@ -218,6 +243,7 @@ export function OrgEndpointsTable({
                     apiEndpoint={`/api/admin/tenants/${tenant.id}`}
                     fieldName="default_scheme"
                     label="Default Scheme"
+                    onFullEditRequired={() => setRootPricingTenant(tenant)}
                   />
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
@@ -231,6 +257,8 @@ export function OrgEndpointsTable({
             {/* Endpoint rows */}
             {allEndpoints.map((endpoint) => {
               const lineage = getLineageStatus(endpoint);
+              const effectiveScheme =
+                endpoint.scheme ?? endpoint.tenant.default_scheme;
               return (
                 <tr key={endpoint.id} className="hover:bg-gray-3">
                   <td className="px-4 py-3">
@@ -252,21 +280,34 @@ export function OrgEndpointsTable({
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
                     <div className="flex items-center gap-2">
-                      <InlinePriceEdit
-                        priceMicro={
-                          endpoint.price ?? endpoint.tenant.default_price
-                        }
-                        defaultPriceMicro={endpoint.tenant.default_price}
-                        onUpdate={() => void mutate()}
-                        apiEndpoint={`/api/admin/tenants/${endpoint.tenant_id}/endpoints/${endpoint.id}`}
-                        fieldName="price"
-                        label="Price"
-                      />
-                      {(endpoint.price ?? endpoint.tenant.default_price) ===
-                        0 && (
-                        <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-                          Free
-                        </span>
+                      {effectiveScheme === "flex" ? (
+                        <button
+                          type="button"
+                          onClick={() => setEditingEndpoint(endpoint)}
+                          className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+                        >
+                          Dynamic
+                          <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                        </button>
+                      ) : (
+                        <>
+                          <InlinePriceEdit
+                            priceMicro={
+                              endpoint.price ?? endpoint.tenant.default_price
+                            }
+                            defaultPriceMicro={endpoint.tenant.default_price}
+                            onUpdate={() => void mutate()}
+                            apiEndpoint={`/api/admin/tenants/${endpoint.tenant_id}/endpoints/${endpoint.id}`}
+                            fieldName="price"
+                            label="Price"
+                          />
+                          {(endpoint.price ?? endpoint.tenant.default_price) ===
+                            0 && (
+                            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                              Free
+                            </span>
+                          )}
+                        </>
                       )}
                     </div>
                   </td>
@@ -278,6 +319,10 @@ export function OrgEndpointsTable({
                       apiEndpoint={`/api/admin/tenants/${endpoint.tenant_id}/endpoints/${endpoint.id}`}
                       fieldName="scheme"
                       label="Scheme"
+                      onFullEditRequired={(selectedScheme) => {
+                        setEditingInitialScheme(selectedScheme);
+                        setEditingEndpoint(endpoint);
+                      }}
                     />
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
@@ -341,13 +386,22 @@ export function OrgEndpointsTable({
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3">
-                    <button
-                      onClick={() => setEndpointToDelete(endpoint)}
-                      className="rounded p-1 text-gray-11 hover:bg-red-900/30 hover:text-red-400"
-                      title="Delete endpoint"
-                    >
-                      <TrashIcon className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => setEditingEndpoint(endpoint)}
+                        className="rounded p-1 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+                        title="Edit endpoint"
+                      >
+                        <Pencil1Icon className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setEndpointToDelete(endpoint)}
+                        className="rounded p-1 text-gray-11 hover:bg-red-900/30 hover:text-red-400"
+                        title="Delete endpoint"
+                      >
+                        <TrashIcon className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );
@@ -355,6 +409,40 @@ export function OrgEndpointsTable({
           </tbody>
         </table>
       </div>
+
+      {editingEndpoint && (
+        <AdminEditEndpointDialog
+          endpoint={editingEndpoint}
+          tenantId={editingEndpoint.tenant_id}
+          defaultPrice={editingEndpoint.tenant.default_price}
+          defaultScheme={editingEndpoint.tenant.default_scheme}
+          initialScheme={editingInitialScheme}
+          onClose={() => {
+            setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
+          }}
+          onSuccess={() => {
+            setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
+            void mutate();
+          }}
+        />
+      )}
+
+      {rootPricingTenant && (
+        <RootPricingRulesDialog
+          open={!!rootPricingTenant}
+          onOpenChange={(open) => {
+            if (!open) setRootPricingTenant(null);
+          }}
+          tenantId={rootPricingTenant.id}
+          defaultSchemeApiEndpoint={`/api/admin/tenants/${rootPricingTenant.id}`}
+          onSaved={() => {
+            void mutate();
+            onUpdate?.();
+          }}
+        />
+      )}
 
       <AlertDialog.Root
         open={!!endpointToDelete}

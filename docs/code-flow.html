@@ -1,0 +1,992 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Technical Walkthrough Of Current Unstaged Diff</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f8f7;
+        --paper: #ffffff;
+        --ink: #17212b;
+        --muted: #586875;
+        --line: #d4dfe4;
+        --green: #176f67;
+        --green-soft: #e2f3ef;
+        --blue: #255f99;
+        --blue-soft: #e7f0fb;
+        --amber: #946019;
+        --amber-soft: #fff2df;
+        --red: #a13f3f;
+        --red-soft: #fae8e8;
+        --code: #edf3f3;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        line-height: 1.52;
+      }
+
+      main {
+        width: min(1260px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 32px 0 72px;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      p {
+        margin: 0;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        max-width: 1020px;
+        font-size: clamp(2.2rem, 4.8vw, 4.6rem);
+        line-height: 1;
+      }
+
+      h2 {
+        margin-bottom: 16px;
+        font-size: clamp(1.55rem, 2.4vw, 2.35rem);
+        line-height: 1.08;
+      }
+
+      h3 {
+        font-size: 1.08rem;
+        line-height: 1.2;
+      }
+
+      h4 {
+        font-size: 0.95rem;
+        line-height: 1.2;
+      }
+
+      code,
+      .mono {
+        font-family: "SFMono-Regular", Consolas, monospace;
+      }
+
+      code {
+        border: 1px solid #cdd8de;
+        border-radius: 5px;
+        background: var(--code);
+        padding: 0.08rem 0.35rem;
+        font-size: 0.9em;
+      }
+
+      section {
+        margin-top: 34px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 24px;
+        align-items: end;
+        border-bottom: 1px solid var(--line);
+        padding: 26px 0 30px;
+      }
+
+      .lede {
+        max-width: 920px;
+        margin-top: 18px;
+        color: var(--muted);
+        font-size: 1.12rem;
+      }
+
+      .stats {
+        display: grid;
+        gap: 10px;
+      }
+
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        padding: 14px;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 1.55rem;
+        line-height: 1;
+      }
+
+      .stat span {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--paper);
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        padding: 18px;
+      }
+
+      .panel p,
+      .panel li {
+        color: var(--muted);
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+      }
+
+      .flow-card {
+        position: relative;
+        min-height: 224px;
+        border-right: 1px solid var(--line);
+        padding: 18px;
+      }
+
+      .flow-card:last-child {
+        border-right: 0;
+      }
+
+      .flow-card::after {
+        content: "";
+        position: absolute;
+        top: 70px;
+        right: -10px;
+        width: 18px;
+        height: 18px;
+        border-top: 2px solid var(--line);
+        border-right: 2px solid var(--line);
+        background: var(--paper);
+        transform: rotate(45deg);
+      }
+
+      .flow-card:last-child::after {
+        display: none;
+      }
+
+      .num {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 14px;
+        border-radius: 999px;
+        background: var(--green);
+        color: #fff;
+        font-weight: 800;
+      }
+
+      .flow-card:nth-child(2) .num,
+      .flow-card:nth-child(5) .num {
+        background: var(--blue);
+      }
+
+      .flow-card:nth-child(4) .num {
+        background: var(--amber);
+      }
+
+      .flow-card:nth-child(6) .num {
+        background: var(--red);
+      }
+
+      .flow-card p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      .file {
+        display: block;
+        width: 100%;
+        margin-top: 12px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fbfcfc;
+        padding: 9px 10px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.82rem;
+      }
+
+      .matrix {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+      }
+
+      .matrix + .matrix {
+        margin-top: 12px;
+      }
+
+      .matrix-label {
+        border-right: 1px solid var(--line);
+        padding: 18px;
+        font-weight: 800;
+      }
+
+      .matrix-body {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .logic {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+      }
+
+      .logic.backend {
+        background: var(--green-soft);
+        border-color: #b9ddd5;
+      }
+
+      .logic.frontend {
+        background: var(--blue-soft);
+        border-color: #bed4ed;
+      }
+
+      .logic.runtime {
+        background: var(--amber-soft);
+        border-color: #ecd0a4;
+      }
+
+      .logic.risk {
+        background: var(--red-soft);
+        border-color: #edc4c4;
+      }
+
+      .logic p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .logic ul {
+        margin: 10px 0 0;
+        padding-left: 1.1rem;
+      }
+
+      .logic li {
+        color: var(--muted);
+      }
+
+      .logic li + li {
+        margin-top: 7px;
+      }
+
+      .read-path {
+        display: grid;
+        gap: 12px;
+      }
+
+      .read-row {
+        display: grid;
+        grid-template-columns: 46px minmax(180px, 0.32fr) minmax(0, 1fr) minmax(
+            260px,
+            0.45fr
+          );
+        gap: 12px;
+      }
+
+      .read-num {
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--ink);
+        color: #fff;
+        font-weight: 800;
+      }
+
+      .read-title,
+      .read-why,
+      .read-detail,
+      .read-file {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        padding: 13px;
+      }
+
+      .read-why,
+      .read-detail {
+        color: var(--muted);
+      }
+
+      .read-file {
+        overflow-wrap: anywhere;
+        font-size: 0.86rem;
+      }
+
+      .call-chain {
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .call {
+        position: relative;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--paper);
+        padding: 14px;
+        min-height: 136px;
+      }
+
+      .call::after {
+        content: ">";
+        position: absolute;
+        top: 50%;
+        right: -13px;
+        color: var(--muted);
+        font-weight: 800;
+        transform: translateY(-50%);
+      }
+
+      .call:last-child::after {
+        display: none;
+      }
+
+      .call p {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .two-col {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .checklist {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+
+      .checklist li + li {
+        margin-top: 10px;
+      }
+
+      @media (max-width: 1080px) {
+        .hero,
+        .flow,
+        .matrix,
+        .matrix-body,
+        .read-row,
+        .call-chain,
+        .two-col {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-card {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+
+        .flow-card::after,
+        .call::after {
+          display: none;
+        }
+
+        .matrix-label {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <div>
+          <h1>Technical Walkthrough Of The Current Unstaged Diff</h1>
+          <p class="lede">
+            This diff is a concrete Flex pricing-rule implementation. The
+            critical change is not merely “show a Dynamic badge.” It changes how
+            pricing rules are represented, validated, stored in
+            <code>tenants.openapi_spec</code>, attached to OpenAPI operations,
+            inherited at runtime, and exposed through endpoint/default pricing
+            editors.
+          </p>
+          <div class="legend">
+            <span class="pill">green = backend storage and validation</span>
+            <span class="pill">blue = UI state and editor flows</span>
+            <span class="pill">orange = generated runtime behavior</span>
+            <span class="pill">red = invariants and test risks</span>
+          </div>
+        </div>
+        <aside class="stats">
+          <div class="stat">
+            <strong>Start here</strong>
+            <span><code>apps/control-plane/src/lib/schemas.ts</code></span>
+          </div>
+          <div class="stat">
+            <strong>Main hinge</strong>
+            <span><code>apps/control-plane/src/routes/endpoints.ts</code></span>
+          </div>
+          <div class="stat">
+            <strong>Runtime proof</strong>
+            <span
+              ><code>gateway-spec-builder.ts</code> and
+              <code>sync.ts</code></span
+            >
+          </div>
+        </aside>
+      </header>
+
+      <section>
+        <h2>One Technical Story</h2>
+        <div class="flow">
+          <article class="flow-card">
+            <div class="num">1</div>
+            <h3>API accepts pricing rules</h3>
+            <p>
+              Request schemas now allow <code>pricing_rules</code> on create and
+              update payloads. That is the public contract for the rest of this
+              diff.
+            </p>
+            <span class="file mono">src/lib/schemas.ts</span>
+          </article>
+          <article class="flow-card">
+            <div class="num">2</div>
+            <h3>UI builds rule objects</h3>
+            <p>
+              The friendly editor produces Faremeter rules:
+              <code>{ match, authorize?, capture }</code>. Advanced JSON can
+              bypass friendly fields.
+            </p>
+            <span class="file mono">control-plane-ui/lib/pricing-rules.ts</span>
+          </article>
+          <article class="flow-card">
+            <div class="num">3</div>
+            <h3>Endpoint routes write operation rules</h3>
+            <p>
+              <code>applyEndpointPricingRules</code> writes rules into OpenAPI
+              operations selected by <code>openapi_source_paths</code> and
+              <code>http_method</code>.
+            </p>
+            <span class="file mono">src/routes/endpoints.ts</span>
+          </article>
+          <article class="flow-card">
+            <div class="num">4</div>
+            <h3>Tenant routes write root rules</h3>
+            <p>
+              Default Flex pricing is root OpenAPI pricing. If there is no spec,
+              the route creates a minimal OpenAPI document before writing rules.
+            </p>
+            <span class="file mono">src/routes/tenants.ts</span>
+          </article>
+          <article class="flow-card">
+            <div class="num">5</div>
+            <h3>Builder preserves inheritance</h3>
+            <p>
+              Generated operations prefer imported operation/path/root pricing
+              before falling back to DB fixed-price generated rules.
+            </p>
+            <span class="file mono">src/lib/gateway-spec-builder.ts</span>
+          </article>
+          <article class="flow-card">
+            <div class="num">6</div>
+            <h3>Sync advertises correct schemes</h3>
+            <p>
+              <code>operationKeyToScheme</code> lets runtime capabilities come
+              from actual generated operations, not only tenant defaults.
+            </p>
+            <span class="file mono">src/lib/sync.ts</span>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Read These Files In This Exact Order</h2>
+        <div class="read-path">
+          <div class="read-row">
+            <div class="read-num">1</div>
+            <div class="read-title"><h3>Request schema</h3></div>
+            <div class="read-why">
+              Understand what the API now accepts before reading how it behaves.
+              Look for <code>pricingRuleType</code>,
+              <code>PricingRulesPayloadSchema</code>, and
+              <code>pricing_rules?</code> added to endpoint and tenant creation
+              schemas.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/lib/schemas.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">2</div>
+            <div class="read-title"><h3>Backend pricing primitives</h3></div>
+            <div class="read-why">
+              This file is the shared backend vocabulary. Critical functions:
+              <code>getOpenApiSpec</code>,
+              <code>getPricingRulesFromObject</code>,
+              <code>getEffectiveOperationPricingRules</code>,
+              <code>setPricingRules</code>, <code>methodCandidates</code>, and
+              <code>validateOperationPricingRules</code>.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/lib/pricing-rules.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">3</div>
+            <div class="read-title"><h3>Endpoint save path</h3></div>
+            <div class="read-why">
+              This is the most important backend file. Read
+              <code>applyEndpointPricingRules</code> first, then the POST
+              <code>/</code> route, then PUT <code>/:id</code>, then GET/PUT
+              <code>/:id/pricing-rules</code>.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/routes/endpoints.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">4</div>
+            <div class="read-title"><h3>Tenant default Flex path</h3></div>
+            <div class="read-why">
+              Root/default pricing is separate from endpoint pricing. Read
+              <code>GET /:id/pricing-rules</code> and
+              <code>PUT /:id/pricing-rules</code>. The critical behavior is
+              creating or updating root <code>x-faremeter-pricing.rules</code>.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/routes/tenants.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">5</div>
+            <div class="read-title"><h3>OpenAPI import behavior</h3></div>
+            <div class="read-why">
+              Read <code>getRootPricingExtension</code> and the import route.
+              Important invariant: importing a new spec should not erase root
+              pricing unless the incoming spec explicitly provides root pricing.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/routes/openapi.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">6</div>
+            <div class="read-title"><h3>Runtime generated spec</h3></div>
+            <div class="read-why">
+              This file tells you what the API node will actually enforce. Read
+              <code>getImportedOperationPricingRules</code>,
+              <code>buildTenantGatewaySpecFromData</code>,
+              <code>getEndpointScheme</code>, and
+              <code>pricingRulesRequireFlex</code>.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane/src/lib/gateway-spec-builder.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">7</div>
+            <div class="read-title"><h3>Node sync capabilities</h3></div>
+            <div class="read-why">
+              Read the changed part of <code>buildNodeConfig</code>. The old
+              model used tenant default scheme. The new model derives schemes
+              from <code>operationKeyToScheme</code> so mixed Exact/Flex tenants
+              are represented correctly.
+            </div>
+            <div class="read-file mono">apps/control-plane/src/lib/sync.ts</div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">8</div>
+            <div class="read-title"><h3>Frontend rule conversion</h3></div>
+            <div class="read-why">
+              Read <code>createFriendlyRule</code>, <code>buildRule</code>,
+              <code>parseRulesJson</code>, and
+              <code>validateFriendlyRules</code>. This file explains exactly how
+              UI fields become technical Faremeter formulas.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane-ui/lib/pricing-rules.ts
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">9</div>
+            <div class="read-title"><h3>Frontend orchestration</h3></div>
+            <div class="read-why">
+              Read <code>PricingRulesForm</code> after helper conversion. Focus
+              on <code>pricingRulesEnabled</code>, rule loading, dirty state,
+              technical JSON, and endpoint-vs-tenant save targets.
+            </div>
+            <div class="read-file mono">
+              apps/control-plane-ui/components/proxy-endpoints/pricing-rules-form.tsx
+            </div>
+          </div>
+
+          <div class="read-row">
+            <div class="read-num">10</div>
+            <div class="read-title"><h3>Editor surfaces</h3></div>
+            <div class="read-why">
+              Now read UI shell files. Important: Flex disables fixed price
+              editing, requires OpenAPI lineage for endpoint rules, and routes
+              default Flex pricing to a root-pricing dialog.
+            </div>
+            <div class="read-file mono">
+              endpoint-edit-dialog.tsx, add-endpoint-dialog.tsx,
+              root-pricing-rules-dialog.tsx, endpoints-tab.tsx
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Critical Logic By Layer</h2>
+
+        <div class="matrix">
+          <div class="matrix-label">Backend: endpoint rules</div>
+          <div class="matrix-body">
+            <article class="logic backend">
+              <h3><code>applyEndpointPricingRules</code></h3>
+              <p>
+                This function is the backend hinge. It receives a DB executor,
+                tenant id, endpoint lineage/method, and rules. It refuses to
+                write rules unless the endpoint has OpenAPI lineage.
+              </p>
+              <ul>
+                <li>
+                  Uses <code>openapi_source_paths</code> to find spec paths.
+                </li>
+                <li>
+                  Uses <code>methodCandidates</code> to expand <code>ANY</code>.
+                </li>
+                <li>Writes rules with <code>setPricingRules</code>.</li>
+                <li>
+                  Validates through <code>validateOperationPricingRules</code>.
+                </li>
+                <li>Saves the updated spec back as JSON.</li>
+              </ul>
+            </article>
+            <article class="logic backend">
+              <h3>Atomic create/update</h3>
+              <p>
+                Endpoint POST and PUT now wrap pricing-rule writes and endpoint
+                row writes in the same transaction. That prevents a half-state
+                where rules are saved but the endpoint is not, or vice versa.
+              </p>
+              <ul>
+                <li>POST uses incoming <code>openapi_source_paths</code>.</li>
+                <li>PUT falls back to existing endpoint lineage/method.</li>
+                <li>
+                  Both return pricing errors before writing endpoint state.
+                </li>
+              </ul>
+            </article>
+            <article class="logic backend">
+              <h3>Read endpoint rules</h3>
+              <p>
+                GET <code>/:id/pricing-rules</code> now returns effective rules,
+                not only operation-local rules. That means root/path inherited
+                rules can show up in the editor.
+              </p>
+              <ul>
+                <li>Orphan endpoint returns <code>editable: false</code>.</li>
+                <li>No spec returns <code>editable: false</code>.</li>
+                <li>
+                  Valid operation returns rules and method/source metadata.
+                </li>
+              </ul>
+            </article>
+          </div>
+        </div>
+
+        <div class="matrix">
+          <div class="matrix-label">Backend: tenant/root rules</div>
+          <div class="matrix-body">
+            <article class="logic backend">
+              <h3><code>GET /:id/pricing-rules</code></h3>
+              <p>
+                Reads root pricing from <code>tenants.openapi_spec</code>. This
+                is default Flex pricing, not endpoint-specific pricing.
+              </p>
+            </article>
+            <article class="logic backend">
+              <h3><code>PUT /:id/pricing-rules</code></h3>
+              <p>
+                Parses existing spec or creates a minimal OpenAPI document with
+                <code>createOpenApiSpec</code>, writes root rules, validates,
+                saves JSON, then syncs assigned nodes.
+              </p>
+            </article>
+            <article class="logic backend">
+              <h3>Create tenant with rules</h3>
+              <p>
+                Admin/org create flows can accept <code>pricing_rules</code>.
+                They create a root-pricing OpenAPI spec and validate it before
+                inserting tenant state.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div class="matrix">
+          <div class="matrix-label">OpenAPI import</div>
+          <div class="matrix-body">
+            <article class="logic backend">
+              <h3>Validation got stricter</h3>
+              <p>
+                Import now checks <code>body.spec</code> is a record before
+                validating OpenAPI fields. This avoids treating non-object input
+                as an OpenAPI object.
+              </p>
+            </article>
+            <article class="logic backend">
+              <h3>Root pricing preservation</h3>
+              <p>
+                If the existing tenant spec has root
+                <code>x-faremeter-pricing</code> and the incoming spec does not,
+                import copies the existing root pricing into the incoming spec.
+              </p>
+            </article>
+            <article class="logic risk">
+              <h3>Critical invariant</h3>
+              <p>
+                Importing OpenAPI should update paths and endpoint lineage
+                without silently deleting default Flex pricing. Tests should
+                cover this because it is easy to regress.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div class="matrix">
+          <div class="matrix-label">Runtime generation</div>
+          <div class="matrix-body">
+            <article class="logic runtime">
+              <h3>Imported pricing precedence</h3>
+              <p>
+                <code>getImportedOperationPricingRules</code> checks operation,
+                then path item, then root pricing. That matches
+                OpenAPI/Faremeter inheritance: nearest pricing wins.
+              </p>
+            </article>
+            <article class="logic runtime">
+              <h3><code>operationKeyToScheme</code></h3>
+              <p>
+                Each generated operation gets a scheme. Imported rules with
+                <code>authorize</code> imply Flex. Otherwise the endpoint or
+                tenant default scheme is used.
+              </p>
+            </article>
+            <article class="logic runtime">
+              <h3>Capabilities in sync</h3>
+              <p>
+                <code>buildNodeConfig</code> derives advertised schemes from
+                <code>operationKeyToScheme</code>. Without this, mixed tenants
+                can advertise the wrong payment capability to the sidecar.
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div class="matrix">
+          <div class="matrix-label">Frontend state</div>
+          <div class="matrix-body">
+            <article class="logic frontend">
+              <h3>Friendly vs technical rules</h3>
+              <p>
+                The UI has a friendly rule model with match mode, amount mode,
+                charge timing, hold amount, fields, and fallbacks. It builds the
+                technical rule object used by Faremeter.
+              </p>
+            </article>
+            <article class="logic frontend">
+              <h3>Charge timing</h3>
+              <p>
+                <code>upfront</code> means no <code>authorize</code> expression.
+                <code>after-response</code> adds <code>authorize</code> as the
+                maximum upfront hold and <code>capture</code> as final charge.
+              </p>
+            </article>
+            <article class="logic frontend">
+              <h3>Technical JSON</h3>
+              <p>
+                Advanced users can edit raw pricing JSON. When technical JSON is
+                dirty, save uses parsed JSON instead of generated friendly-rule
+                output.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Data Flow From UI To Runtime</h2>
+        <div class="call-chain">
+          <article class="call">
+            <h3>Form fields</h3>
+            <p>
+              User sets match, charge amount, upfront/after-response, fields,
+              fallback values.
+            </p>
+          </article>
+          <article class="call">
+            <h3><code>buildRule</code></h3>
+            <p>
+              Friendly state becomes
+              <code>{ match, capture, authorize? }</code>.
+            </p>
+          </article>
+          <article class="call">
+            <h3>Create/Edit payload</h3>
+            <p>
+              UI sends <code>pricing_rules</code> only for Flex and only when
+              rules are relevant.
+            </p>
+          </article>
+          <article class="call">
+            <h3>Endpoint or tenant route</h3>
+            <p>
+              Endpoint rules write operations. Tenant rules write root OpenAPI.
+            </p>
+          </article>
+          <article class="call">
+            <h3><code>tenants.openapi_spec</code></h3>
+            <p>Rules live in OpenAPI <code>x-faremeter-pricing.rules</code>.</p>
+          </article>
+          <article class="call">
+            <h3>Gateway spec builder</h3>
+            <p>
+              Runtime spec is built with inherited pricing and operation scheme
+              mapping.
+            </p>
+          </article>
+          <article class="call">
+            <h3>Sidecar config</h3>
+            <p>
+              Sync pushes capabilities and generated spec to the node runtime.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="two-col">
+        <article class="panel">
+          <h2>Critical Invariants</h2>
+          <ul class="checklist">
+            <li>
+              Endpoint-level pricing rules require
+              <code>openapi_source_paths</code>. If a row is orphaned, the UI
+              must not pretend operation rules can be edited.
+            </li>
+            <li>
+              Saving endpoint rules must update
+              <code>tenants.openapi_spec</code>
+              and endpoint state consistently. That is why POST/PUT use a DB
+              transaction.
+            </li>
+            <li>
+              Root/default Flex pricing and endpoint Flex pricing are different
+              write targets. Root rules go on the OpenAPI document; endpoint
+              rules go on operations.
+            </li>
+            <li>
+              OpenAPI import must preserve existing root pricing unless the new
+              spec explicitly brings its own root pricing.
+            </li>
+            <li>
+              Runtime scheme capability must be operation-derived for mixed
+              Exact/Flex tenants. Tenant default alone is not enough.
+            </li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h2>Tests To Read Last</h2>
+          <ul class="checklist">
+            <li>
+              <code>apps/control-plane/src/routes/endpoints.test.ts</code>:
+              endpoint create/edit, pricing-rule read/write, orphan behavior.
+            </li>
+            <li>
+              <code>apps/control-plane/src/routes/openapi.test.ts</code>: import
+              preservation and spec behavior.
+            </li>
+            <li>
+              <code>apps/control-plane/src/routes/tenants.test.ts</code> and
+              <code>admin.test.ts</code>: root pricing on tenant/default flows.
+            </li>
+            <li>
+              <code
+                >apps/control-plane/src/lib/gateway-spec-builder.test.ts</code
+              >: inherited pricing and scheme mapping.
+            </li>
+            <li>
+              <code>apps/control-plane/src/lib/sync.test.ts</code>: node config
+              capabilities from generated operation schemes.
+            </li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="panel">
+        <h2>What To Ignore On First Read</h2>
+        <p>
+          Do not start with the large table files. They look huge because they
+          add entry points, badges, and modal wiring across dashboard/admin/org
+          surfaces. They are not the conceptual core. First understand schemas,
+          backend rule writes, OpenAPI storage, runtime generation, and frontend
+          rule conversion. Then the UI table changes become easy to classify:
+          fixed-price rows keep inline price editing; Flex rows open a full
+          pricing editor because a scheme toggle alone is not enough data.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

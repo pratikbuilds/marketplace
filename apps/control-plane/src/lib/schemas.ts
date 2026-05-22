@@ -37,6 +37,16 @@ const tagsArrayType = tagType.array().narrow((arr, ctx) => {
   return true;
 });
 
+const pricingRuleType = type({
+  match: "string > 0",
+  "authorize?": "string > 0",
+  capture: "string > 0",
+});
+
+export const PricingRulesPayloadSchema = type({
+  rules: pricingRuleType.array(),
+});
+
 const backendUrlType = type(
   `string > 0 & string <= ${MAX_BACKEND_URL_LENGTH}`,
 ).narrow((s, ctx) => {
@@ -65,6 +75,7 @@ export const CreateEndpointSchema = type({
   "http_method?":
     "'ANY' | 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'",
   "openapi_source_paths?": "string[] | null",
+  "pricing_rules?": pricingRuleType.array(),
   "tags?": tagsArrayType,
 });
 
@@ -78,6 +89,7 @@ export const UpdateEndpointSchema = type({
     "'ANY' | 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS'",
   "is_active?": "boolean",
   "openapi_source_paths?": "string[] | null",
+  "pricing_rules?": pricingRuleType.array(),
   "tags?": tagsArrayType,
 });
 
@@ -145,6 +157,7 @@ export const OrgCreateTenantSchema = type({
   "upstream_auth_header?": `string <= ${MAX_AUTH_HEADER_LENGTH} | null`,
   "upstream_auth_value?": `string <= ${MAX_AUTH_VALUE_LENGTH} | null`,
   "register_only?": "boolean",
+  "pricing_rules?": pricingRuleType.array(),
 });
 
 export const OrgUpdateTenantSchema = type({
@@ -180,6 +193,7 @@ export const AdminCreateTenantSchema = type({
   "upstream_auth_value?": `string <= ${MAX_AUTH_VALUE_LENGTH} | null`,
   "register_only?": "boolean",
   "tags?": tagsArrayType,
+  "pricing_rules?": pricingRuleType.array(),
 });
 
 const orgSlug = type(
