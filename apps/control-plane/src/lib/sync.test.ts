@@ -191,7 +191,7 @@ await t.test(
 );
 
 await t.test(
-  "sidecar capabilities use the tenant scheme instead of endpoint scheme",
+  "sidecar capabilities use emitted operation schemes",
   async (t) => {
     const org = await createOrg("Team", "team");
     const walletConfig = {
@@ -216,7 +216,7 @@ await t.test(
       unknown
     >;
     t.same(site.capabilities, {
-      schemes: ["flex"],
+      schemes: ["exact"],
       networks: ["solana-mainnet-beta"],
       assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
     });
@@ -262,7 +262,7 @@ await t.test(
     t.equal(site.tenantName, "my-api");
     t.equal(site.orgSlug, "team");
     t.same(site.capabilities, {
-      schemes: ["exact"],
+      schemes: ["flex"],
       networks: ["solana-mainnet-beta"],
       assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
     });

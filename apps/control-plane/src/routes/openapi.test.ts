@@ -65,6 +65,14 @@ const ImportResponse = type({
   "+": "delete",
 });
 
+const RootPricingSpec = type({
+  "x-faremeter-pricing": {
+    rules: "unknown[]",
+    "+": "delete",
+  },
+  "+": "delete",
+});
+
 const DeleteSpecResponse = type({
   success: "boolean",
   "+": "delete",
@@ -284,6 +292,32 @@ await t.test("POST /api/tenants/:tenantId/openapi/import", async (t) => {
     t.ok(data.error.includes("No paths"));
   });
 
+  await t.test("rejects path keys without leading slash", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-tenant");
+
+    const res = await app.request(`/api/tenants/${tenant.id}/openapi/import`, {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${user.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        spec: {
+          openapi: "3.0.0",
+          info: { title: "Test", version: "1.0.0" },
+          paths: { "relative/path": { get: {} } },
+        },
+      }),
+    });
+
+    t.equal(res.status, 400);
+    const data = ErrorResponse.assert(await res.json());
+    t.ok(data.error.includes("Invalid"));
+  });
+
   await t.test("imports valid spec and creates endpoints", async (t) => {
     const user = await createUser("member@example.com");
     const org = await createOrg("Team", "team");
@@ -303,6 +337,61 @@ await t.test("POST /api/tenants/:tenantId/openapi/import", async (t) => {
     t.equal(data.success, true);
     t.ok(data.created >= 2);
   });
+
+  await t.test(
+    "preserves existing root pricing when imported spec has none",
+    async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const existingRules = [
+        {
+          selector: { type: "json_path", path: "$.model" },
+          prices: { "gpt-4": "0.04", default: "0.01" },
+        },
+      ];
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.0",
+            info: { title: "Existing", version: "1.0.0" },
+            paths: {
+              "/existing": {
+                get: { responses: { "200": { description: "OK" } } },
+              },
+            },
+            "x-faremeter-pricing": { rules: existingRules },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/openapi/import`,
+        {
+          method: "POST",
+          headers: {
+            Cookie: `auth_token=${user.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ spec: OPENAPI_USPTO }),
+        },
+      );
+
+      t.equal(res.status, 200);
+      const savedTenant = await db
+        .selectFrom("tenants")
+        .select(["openapi_spec"])
+        .where("id", "=", tenant.id)
+        .executeTakeFirstOrThrow();
+      const savedSpec = RootPricingSpec.assert(savedTenant.openapi_spec);
+
+      t.same(savedSpec["x-faremeter-pricing"].rules, existingRules);
+    },
+  );
 
   await t.test("rejects OpenAPI 2.x spec", async (t) => {
     const user = await createUser("member@example.com");
