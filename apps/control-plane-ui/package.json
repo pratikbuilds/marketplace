@@ -35,6 +35,7 @@
     "@solana/kit": "catalog:",
     "@uiw/react-json-view": "^2.0.0-alpha.40",
     "arktype": "catalog:",
+    "bs58": "catalog:",
     "geist": "^1.5.1",
     "next": "^15.5.7",
     "papaparse": "^5.5.3",
