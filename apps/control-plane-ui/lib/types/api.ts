@@ -9,16 +9,21 @@ export const MAX_TAGS = 5;
 export const MAX_TAG_LENGTH = 50;
 
 // Add new schemes here - this is the single source of truth
-export const SCHEMES = ["exact"] as const;
+export const SCHEMES = ["exact", "flex"] as const;
+export type Scheme = (typeof SCHEMES)[number];
+export const DEFAULT_SCHEME: Scheme = "flex";
 
 export const SchemeSchema = type("'exact' | 'flex'");
 
-export type Scheme = (typeof SCHEMES)[number];
+export function isScheme(value: string): value is Scheme {
+  return value === "exact" || value === "flex";
+}
 
-export const SCHEME_OPTIONS = [
-  ...SCHEMES.map((s) => ({ value: s, label: s, disabled: false })),
-  { value: "flex", label: "FLEX", disabled: true },
-];
+export const SCHEME_OPTIONS = SCHEMES.map((s) => ({
+  value: s,
+  label: s,
+  disabled: false,
+}));
 
 export const TenantSchema = type({
   id: "number",
