@@ -8,6 +8,7 @@ import useSWR from "swr";
 import { api } from "@/lib/api/client";
 import { InlinePriceEdit } from "@/components/shared/inline-price-edit";
 import { InlineSchemeEdit } from "@/components/shared/inline-scheme-edit";
+import { RootPricingRulesDialog } from "@/components/proxy-endpoints/root-pricing-rules-dialog";
 import Link from "next/link";
 import {
   Pencil1Icon,
@@ -133,6 +134,7 @@ function TenantCard({
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [rootPricingOpen, setRootPricingOpen] = useState(false);
   const storageKey = `endpoints-collapsed-${tenant.id}`;
   const hasStoredPref =
     typeof window !== "undefined" && localStorage.getItem(storageKey) !== null;
@@ -270,6 +272,7 @@ function TenantCard({
                     tenant={tenant}
                     orgId={orgId}
                     apiEndpoint={apiEndpoint}
+                    onEditRootPricing={() => setRootPricingOpen(true)}
                     onUpdate={onUpdate}
                   />
                   {(isExpanded ? endpoints : endpoints?.slice(0, 5))?.map(
@@ -301,6 +304,13 @@ function TenantCard({
           )}
         </div>
       )}
+      <RootPricingRulesDialog
+        open={rootPricingOpen}
+        onOpenChange={setRootPricingOpen}
+        tenantId={tenant.id}
+        defaultSchemeApiEndpoint={apiEndpoint}
+        onSaved={onUpdate}
+      />
     </div>
   );
 }
@@ -309,11 +319,13 @@ function CatchAllRow({
   tenant,
   orgId,
   apiEndpoint,
+  onEditRootPricing,
   onUpdate,
 }: {
   tenant: Tenant;
   orgId: number;
   apiEndpoint: string;
+  onEditRootPricing: () => void;
   onUpdate: () => void;
 }) {
   const { toast } = useToast();
@@ -327,102 +339,118 @@ function CatchAllRow({
   );
 
   return (
-    <tr className="bg-gray-3/50">
-      <td className="py-2 align-middle">
-        <code className="rounded bg-accent-4 px-1.5 py-0.5 text-xs text-accent-11">
-          /
-        </code>
-        <span className="ml-2 text-xs text-gray-11">(catch-all)</span>
-      </td>
-      <td className="py-2 align-middle text-center">
-        <div className="inline-flex items-center gap-1">
-          <button
-            onClick={() => {
-              void navigator.clipboard.writeText(proxyUrl);
-              toast({ title: "URL copied to clipboard", variant: "success" });
-            }}
-            className="rounded border border-gray-6 p-1 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
-            title="Copy URL"
-          >
-            <CopyIcon className="h-3 w-3" />
-          </button>
-          <a
-            href={proxyUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded border border-gray-6 p-1 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
-            title="Open URL"
-          >
-            <ExternalLinkIcon className="h-3 w-3" />
-          </a>
-        </div>
-      </td>
-      <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
-        <div className="flex items-center justify-end gap-2">
-          {tenant.default_price < 0.0000001 && (
-            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-              Free
-            </span>
-          )}
-          <InlinePriceEdit
-            priceMicro={tenant.default_price}
+    <>
+      <tr className="bg-gray-3/50">
+        <td className="py-2 align-middle">
+          <code className="rounded bg-accent-4 px-1.5 py-0.5 text-xs text-accent-11">
+            /
+          </code>
+          <span className="ml-2 text-xs text-gray-11">(catch-all)</span>
+        </td>
+        <td className="py-2 align-middle text-center">
+          <div className="inline-flex items-center gap-1">
+            <button
+              onClick={() => {
+                void navigator.clipboard.writeText(proxyUrl);
+                toast({ title: "URL copied to clipboard", variant: "success" });
+              }}
+              className="rounded border border-gray-6 p-1 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+              title="Copy URL"
+            >
+              <CopyIcon className="h-3 w-3" />
+            </button>
+            <a
+              href={proxyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded border border-gray-6 p-1 text-gray-11 hover:bg-gray-4 hover:text-gray-12"
+              title="Open URL"
+            >
+              <ExternalLinkIcon className="h-3 w-3" />
+            </a>
+          </div>
+        </td>
+        <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
+          <div className="flex items-center justify-end gap-2">
+            {tenant.default_scheme === "flex" ? (
+              <button
+                type="button"
+                onClick={onEditRootPricing}
+                className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+              >
+                Dynamic
+                <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+              </button>
+            ) : (
+              <>
+                {tenant.default_price < 0.0000001 && (
+                  <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                    Free
+                  </span>
+                )}
+                <InlinePriceEdit
+                  priceMicro={tenant.default_price}
+                  onUpdate={onUpdate}
+                  apiEndpoint={apiEndpoint}
+                  fieldName="default_price"
+                  label="Default Price"
+                />
+              </>
+            )}
+          </div>
+        </td>
+        <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
+          <InlineSchemeEdit
+            scheme={tenant.default_scheme}
             onUpdate={onUpdate}
             apiEndpoint={apiEndpoint}
-            fieldName="default_price"
-            label="Default Price"
+            fieldName="default_scheme"
+            label="Default Scheme"
+            onFullEditRequired={onEditRootPricing}
           />
-        </div>
-      </td>
-      <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
-        <InlineSchemeEdit
-          scheme={tenant.default_scheme}
-          onUpdate={onUpdate}
-          apiEndpoint={apiEndpoint}
-          fieldName="default_scheme"
-          label="Default Scheme"
-        />
-      </td>
-      <td
-        className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getValueColor(analytics?.total_earned)}`}
-      >
-        <span className="inline-flex items-center gap-1">
-          {isLoading ? "..." : formatUSDC(analytics?.total_earned)}
-          {!isLoading && buildTokenTooltip(analytics?.token_breakdown) && (
-            <span
-              className="cursor-help text-gray-9"
-              title={buildTokenTooltip(analytics?.token_breakdown)}
-            >
-              <InfoCircledIcon className="h-3 w-3" />
-            </span>
-          )}
-        </span>
-      </td>
-      <td
-        className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getValueColor(analytics?.current_month_earned)}`}
-      >
-        <span className="inline-flex items-center gap-1">
-          {isLoading ? "..." : formatUSDC(analytics?.current_month_earned)}
-          {!isLoading && buildTokenTooltip(analytics?.token_breakdown) && (
-            <span
-              className="cursor-help text-gray-9"
-              title={buildTokenTooltip(analytics?.token_breakdown)}
-            >
-              <InfoCircledIcon className="h-3 w-3" />
-            </span>
-          )}
-        </span>
-      </td>
-      <td
-        className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getChangeColor(analytics?.percent_change)}`}
-      >
-        {isLoading ? "..." : formatChange(analytics?.percent_change)}
-      </td>
-      <td className="whitespace-nowrap py-2 text-right align-middle text-xs text-white">
-        {isLoading
-          ? "..."
-          : (analytics?.total_transactions ?? 0).toLocaleString()}
-      </td>
-    </tr>
+        </td>
+        <td
+          className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getValueColor(analytics?.total_earned)}`}
+        >
+          <span className="inline-flex items-center gap-1">
+            {isLoading ? "..." : formatUSDC(analytics?.total_earned)}
+            {!isLoading && buildTokenTooltip(analytics?.token_breakdown) && (
+              <span
+                className="cursor-help text-gray-9"
+                title={buildTokenTooltip(analytics?.token_breakdown)}
+              >
+                <InfoCircledIcon className="h-3 w-3" />
+              </span>
+            )}
+          </span>
+        </td>
+        <td
+          className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getValueColor(analytics?.current_month_earned)}`}
+        >
+          <span className="inline-flex items-center gap-1">
+            {isLoading ? "..." : formatUSDC(analytics?.current_month_earned)}
+            {!isLoading && buildTokenTooltip(analytics?.token_breakdown) && (
+              <span
+                className="cursor-help text-gray-9"
+                title={buildTokenTooltip(analytics?.token_breakdown)}
+              >
+                <InfoCircledIcon className="h-3 w-3" />
+              </span>
+            )}
+          </span>
+        </td>
+        <td
+          className={`whitespace-nowrap py-2 text-right align-middle text-xs ${isLoading ? "text-gray-9" : getChangeColor(analytics?.percent_change)}`}
+        >
+          {isLoading ? "..." : formatChange(analytics?.percent_change)}
+        </td>
+        <td className="whitespace-nowrap py-2 text-right align-middle text-xs text-white">
+          {isLoading
+            ? "..."
+            : (analytics?.total_transactions ?? 0).toLocaleString()}
+        </td>
+      </tr>
+    </>
   );
 }
 
@@ -444,6 +472,7 @@ function EndpointRow({
   });
   const endpointPath = endpoint.path ?? endpoint.path_pattern;
   const fullUrl = `${proxyUrl}${endpointPath}`;
+  const effectiveScheme = endpoint.scheme ?? tenant.default_scheme;
   const { data: analytics, isLoading } = useSWR(
     `/api/organizations/${orgId}/tenants/${tenant.id}/endpoints/${endpoint.id}/analytics`,
     api.get<EarningsAnalytics>,
@@ -481,19 +510,31 @@ function EndpointRow({
       </td>
       <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
         <div className="flex items-center justify-end gap-2">
-          {(endpoint.price ?? tenant.default_price) < 0.0000001 && (
-            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-              Free
-            </span>
+          {effectiveScheme === "flex" ? (
+            <Link
+              href={`/proxies/${tenant.id}?tab=endpoints`}
+              className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+            >
+              Dynamic
+              <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+            </Link>
+          ) : (
+            <>
+              {(endpoint.price ?? tenant.default_price) < 0.0000001 && (
+                <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                  Free
+                </span>
+              )}
+              <InlinePriceEdit
+                priceMicro={endpoint.price ?? tenant.default_price}
+                defaultPriceMicro={tenant.default_price}
+                onUpdate={onUpdate}
+                apiEndpoint={`/api/tenants/${tenant.id}/endpoints/${endpoint.id}`}
+                fieldName="price"
+                label="Price"
+              />
+            </>
           )}
-          <InlinePriceEdit
-            priceMicro={endpoint.price ?? tenant.default_price}
-            defaultPriceMicro={tenant.default_price}
-            onUpdate={onUpdate}
-            apiEndpoint={`/api/tenants/${tenant.id}/endpoints/${endpoint.id}`}
-            fieldName="price"
-            label="Price"
-          />
         </div>
       </td>
       <td className="whitespace-nowrap py-2 pl-4 text-right align-middle">
@@ -504,6 +545,9 @@ function EndpointRow({
           apiEndpoint={`/api/tenants/${tenant.id}/endpoints/${endpoint.id}`}
           fieldName="scheme"
           label="Scheme"
+          onFullEditRequired={() => {
+            window.location.href = `/proxies/${tenant.id}?tab=endpoints`;
+          }}
         />
       </td>
       <td
