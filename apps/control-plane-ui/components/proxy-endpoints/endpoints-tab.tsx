@@ -18,6 +18,7 @@ import { OpenApiImportDialog } from "./openapi-import-dialog";
 import { OpenApiExportDialog } from "./openapi-export-dialog";
 import { AddEndpointDialog } from "./add-endpoint-dialog";
 import { EditEndpointPopover } from "./edit-endpoint-popover";
+import { RootPricingRulesDialog } from "./root-pricing-rules-dialog";
 import { InlinePriceEdit } from "@/components/shared/inline-price-edit";
 import { InlineSchemeEdit } from "@/components/shared/inline-scheme-edit";
 import { useToast } from "@/components/ui/toast";
@@ -59,7 +60,11 @@ export function EndpointsTab({
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
+  const [rootPricingOpen, setRootPricingOpen] = useState(false);
   const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
+  const [editingInitialScheme, setEditingInitialScheme] = useState<
+    string | undefined
+  >(undefined);
   const [endpointToDelete, setEndpointToDelete] = useState<Endpoint | null>(
     null,
   );
@@ -178,6 +183,7 @@ export function EndpointsTab({
             <tbody className="divide-y divide-gray-6 bg-gray-2">
               {endpoints?.map((endpoint) => {
                 const lineage = getLineageStatus(endpoint);
+                const effectiveScheme = endpoint.scheme ?? defaultScheme;
                 return (
                   <tr key={endpoint.id} className="hover:bg-gray-3">
                     <td className="px-4 py-3">
@@ -210,19 +216,31 @@ export function EndpointsTab({
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
                       <div className="flex items-center gap-2">
-                        <InlinePriceEdit
-                          priceMicro={endpoint.price ?? defaultPrice}
-                          defaultPriceMicro={defaultPrice}
-                          onUpdate={() => void mutate()}
-                          apiEndpoint={`/api/tenants/${tenantId}/endpoints/${endpoint.id}`}
-                          fieldName="price"
-                          label="Price"
-                        />
-                        {(endpoint.price ?? defaultPrice) === 0 && (
-                          <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-                            Free
-                          </span>
+                        {effectiveScheme === "flex" ? (
+                          <button
+                            type="button"
+                            onClick={() => setEditingEndpoint(endpoint)}
+                            className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+                          >
+                            Dynamic
+                            <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                          </button>
+                        ) : (
+                          <InlinePriceEdit
+                            priceMicro={endpoint.price ?? defaultPrice}
+                            defaultPriceMicro={defaultPrice}
+                            onUpdate={() => void mutate()}
+                            apiEndpoint={`/api/tenants/${tenantId}/endpoints/${endpoint.id}`}
+                            fieldName="price"
+                            label="Price"
+                          />
                         )}
+                        {effectiveScheme !== "flex" &&
+                          (endpoint.price ?? defaultPrice) === 0 && (
+                            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                              Free
+                            </span>
+                          )}
                       </div>
                     </td>
                     <td className="whitespace-nowrap px-4 py-3">
@@ -233,6 +251,10 @@ export function EndpointsTab({
                         apiEndpoint={`/api/tenants/${tenantId}/endpoints/${endpoint.id}`}
                         fieldName="scheme"
                         label="Scheme"
+                        onFullEditRequired={(selectedScheme) => {
+                          setEditingInitialScheme(selectedScheme);
+                          setEditingEndpoint(endpoint);
+                        }}
                       />
                     </td>
                     {hasOpenApiSpec && (
@@ -332,17 +354,30 @@ export function EndpointsTab({
                 </td>
                 <td className="whitespace-nowrap px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <InlinePriceEdit
-                      priceMicro={defaultPrice}
-                      onUpdate={onDefaultsChange}
-                      apiEndpoint={`/api/organizations/${orgId}/tenants/${tenantId}`}
-                      fieldName="default_price"
-                      label="Default Price"
-                    />
-                    {defaultPrice === 0 && (
-                      <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
-                        Free
-                      </span>
+                    {defaultScheme === "flex" ? (
+                      <button
+                        type="button"
+                        onClick={() => setRootPricingOpen(true)}
+                        className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+                      >
+                        Dynamic
+                        <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                      </button>
+                    ) : (
+                      <>
+                        <InlinePriceEdit
+                          priceMicro={defaultPrice}
+                          onUpdate={onDefaultsChange}
+                          apiEndpoint={`/api/organizations/${orgId}/tenants/${tenantId}`}
+                          fieldName="default_price"
+                          label="Default Price"
+                        />
+                        {defaultPrice === 0 && (
+                          <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400 border border-green-800">
+                            Free
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </td>
@@ -353,6 +388,7 @@ export function EndpointsTab({
                     apiEndpoint={`/api/organizations/${orgId}/tenants/${tenantId}`}
                     fieldName="default_scheme"
                     label="Default Scheme"
+                    onFullEditRequired={() => setRootPricingOpen(true)}
                   />
                 </td>
                 {hasOpenApiSpec && (
@@ -373,6 +409,7 @@ export function EndpointsTab({
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
         tenantId={tenantId}
+        defaultScheme={defaultScheme}
         onSuccess={() => {
           void mutate();
           onSpecChange();
@@ -395,13 +432,27 @@ export function EndpointsTab({
         defaultScheme={defaultScheme}
       />
 
+      <RootPricingRulesDialog
+        open={rootPricingOpen}
+        onOpenChange={setRootPricingOpen}
+        tenantId={tenantId}
+        defaultSchemeApiEndpoint={`/api/organizations/${orgId}/tenants/${tenantId}`}
+        onSaved={onDefaultsChange}
+      />
+
       {editingEndpoint && (
         <EditEndpointPopover
           endpoint={editingEndpoint}
           tenantId={tenantId}
-          onClose={() => setEditingEndpoint(null)}
+          defaultScheme={defaultScheme}
+          initialScheme={editingInitialScheme}
+          onClose={() => {
+            setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
+          }}
           onSuccess={() => {
             setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
             void mutate();
           }}
         />

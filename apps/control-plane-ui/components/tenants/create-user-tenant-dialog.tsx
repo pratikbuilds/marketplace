@@ -5,6 +5,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import * as Select from "@radix-ui/react-select";
 import * as Checkbox from "@radix-ui/react-checkbox";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import {
   Cross2Icon,
   PlusIcon,
@@ -22,7 +23,13 @@ import { api, ApiError } from "@/lib/api/client";
 import { DOCS_URL } from "@/lib/brand";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { SCHEME_OPTIONS, MIN_PRICE_USD, MAX_PRICE_USD } from "@/lib/types/api";
+import {
+  DEFAULT_SCHEME,
+  SCHEME_OPTIONS,
+  isScheme,
+  MIN_PRICE_USD,
+  MAX_PRICE_USD,
+} from "@/lib/types/api";
 import { useToast } from "@/components/ui/toast";
 import { sanitizeProxyName } from "@/lib/proxy-name";
 import useSWR from "swr";
@@ -37,6 +44,10 @@ import {
 } from "@/lib/auth-header";
 import { type WalletConfig } from "@/lib/wallet";
 import { parseOpenApiSpec } from "@/lib/openapi/parser";
+import {
+  PricingRulesForm,
+  type PricingRule,
+} from "@/components/proxy-endpoints/pricing-rules-form";
 
 interface Wallet {
   id: number;
@@ -126,7 +137,7 @@ export function CreateUserTenantDialog({
   const [customPrefix, setCustomPrefix] = useState("");
   const [authToken, setAuthToken] = useState("");
   const [defaultPrice, setDefaultPrice] = useState("0.01");
-  const [defaultScheme, setDefaultScheme] = useState("exact");
+  const [defaultScheme, setDefaultScheme] = useState(DEFAULT_SCHEME);
   const [registerOnly, setRegisterOnly] = useState(false);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -135,6 +146,20 @@ export function CreateUserTenantDialog({
   const [showAuthValue, setShowAuthValue] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
   const checkTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isFlexScheme = defaultScheme === "flex";
+  const [rootPricingRules, setRootPricingRules] = useState<PricingRule[]>([]);
+  const [rootPricingRulesDirty, setRootPricingRulesDirty] = useState(false);
+  const [rootPricingRulesValid, setRootPricingRulesValid] = useState(true);
+  const shouldPersistRootPricingRules =
+    isFlexScheme && rootPricingRules.length > 0;
+  const disabledDefaultPriceTooltip =
+    "Flex proxies use the dynamic pricing rules below, so this fixed default price is not used.";
+
+  const handleDefaultSchemeChange = (value: string) => {
+    if (isScheme(value)) {
+      setDefaultScheme(value);
+    }
+  };
 
   const getFinalAuthHeader = () => {
     if (!authToken.trim()) return null;
@@ -155,8 +180,9 @@ export function CreateUserTenantDialog({
       customHeader.trim() !== "" ||
       customPrefix.trim() !== "" ||
       defaultPrice !== "0.01" ||
-      defaultScheme !== "exact" ||
-      registerOnly
+      defaultScheme !== DEFAULT_SCHEME ||
+      registerOnly ||
+      rootPricingRulesDirty
     );
   }, [
     name,
@@ -168,6 +194,7 @@ export function CreateUserTenantDialog({
     defaultPrice,
     defaultScheme,
     registerOnly,
+    rootPricingRulesDirty,
   ]);
 
   const attemptClose = useCallback(() => {
@@ -236,6 +263,11 @@ export function CreateUserTenantDialog({
   const handleImport = async () => {
     if (!parsedSpec) return;
 
+    if (isFlexScheme && !rootPricingRulesValid) {
+      setError("Fix pricing rules before importing the OpenAPI spec");
+      return;
+    }
+
     setImporting(true);
     setError("");
 
@@ -274,6 +306,9 @@ export function CreateUserTenantDialog({
             ),
             default_scheme: defaultScheme,
             register_only: true,
+            ...(shouldPersistRootPricingRules && {
+              pricing_rules: rootPricingRules,
+            }),
           },
         );
         tenantId = created.id;
@@ -399,7 +434,7 @@ export function CreateUserTenantDialog({
     setCustomPrefix("");
     setAuthToken("");
     setDefaultPrice("0.01");
-    setDefaultScheme("exact");
+    setDefaultScheme(DEFAULT_SCHEME);
     setRegisterOnly(false);
     setError("");
     setNameAvailable(null);
@@ -414,6 +449,9 @@ export function CreateUserTenantDialog({
     setImporting(false);
     setImportResult(null);
     setIsGoingBack(false);
+    setRootPricingRules([]);
+    setRootPricingRulesDirty(false);
+    setRootPricingRulesValid(true);
   };
 
   const handleOpenChange = (newOpen: boolean) => {
@@ -520,6 +558,10 @@ export function CreateUserTenantDialog({
       setError(`Price must be $${MAX_PRICE_USD} or less`);
       return;
     }
+    if (isFlexScheme && !rootPricingRulesValid) {
+      setError("Fix pricing rules before creating the proxy");
+      return;
+    }
 
     if (registerOnly) {
       setIsSubmitting(true);
@@ -561,7 +603,7 @@ export function CreateUserTenantDialog({
     }
 
     try {
-      await api.post<{ id: number }>(
+      const created = await api.post<{ id: number }>(
         `/api/organizations/${organizationId}/tenants`,
         {
           name: name.trim(),
@@ -574,6 +616,9 @@ export function CreateUserTenantDialog({
           ),
           default_scheme: defaultScheme,
           register_only: registerOnly,
+          ...(shouldPersistRootPricingRules && {
+            pricing_rules: rootPricingRules,
+          }),
         },
       );
       toast({
@@ -595,6 +640,9 @@ export function CreateUserTenantDialog({
         resetForm();
         onOpenChange(false);
         onSuccess();
+        if (isFlexScheme) {
+          router.push(`/proxies/${created.id}?tab=endpoints`);
+        }
       }
     } catch (err) {
       if (err instanceof ApiError && err.data) {
@@ -612,7 +660,9 @@ export function CreateUserTenantDialog({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" />
         <Dialog.Content
-          className="fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-gray-6 bg-gray-1 p-6 shadow-xl"
+          className={`scrollbar-none fixed left-1/2 top-1/2 z-50 max-h-[85vh] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-gray-6 bg-gray-1 p-6 shadow-xl ${
+            isFlexScheme ? "max-w-5xl" : "max-w-lg"
+          }`}
           onInteractOutside={(e) => {
             if (
               isSubmitting ||
@@ -1310,52 +1360,77 @@ export function CreateUserTenantDialog({
                       <label className="mb-1.5 block text-sm text-gray-11">
                         Default Price
                       </label>
-                      <div className="flex items-center gap-0 rounded-md border border-gray-6 bg-gray-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = Math.max(
-                              0,
-                              parseFloat(defaultPrice) - 0.01,
-                            );
-                            setDefaultPrice(
-                              val.toFixed(6).replace(/\.?0+$/, "") || "0",
-                            );
-                          }}
-                          className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-l-md"
-                        >
-                          <MinusIcon className="h-4 w-4" />
-                        </button>
-                        <div className="flex flex-1 items-center">
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={defaultPrice}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === "" || /^\d*\.?\d*$/.test(val)) {
-                                setDefaultPrice(val);
-                              }
-                            }}
-                            className="w-full bg-transparent py-2 text-center text-sm text-gray-12 focus:outline-none"
-                          />
-                          <span className="pr-2 text-xs text-gray-11">
-                            USDC
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = parseFloat(defaultPrice || "0") + 0.01;
-                            setDefaultPrice(
-                              val.toFixed(6).replace(/\.?0+$/, ""),
-                            );
-                          }}
-                          className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-r-md"
-                        >
-                          <PlusIcon className="h-4 w-4" />
-                        </button>
-                      </div>
+                      <Tooltip.Provider delayDuration={150}>
+                        <Tooltip.Root>
+                          <Tooltip.Trigger asChild>
+                            <div
+                              tabIndex={isFlexScheme ? 0 : undefined}
+                              className="flex items-center gap-0 rounded-md border border-gray-6 bg-gray-2"
+                            >
+                              <button
+                                type="button"
+                                disabled={isFlexScheme}
+                                onClick={() => {
+                                  const val = Math.max(
+                                    0,
+                                    parseFloat(defaultPrice) - 0.01,
+                                  );
+                                  setDefaultPrice(
+                                    val.toFixed(6).replace(/\.?0+$/, "") || "0",
+                                  );
+                                }}
+                                className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-l-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
+                              >
+                                <MinusIcon className="h-4 w-4" />
+                              </button>
+                              <div className="flex flex-1 items-center">
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={defaultPrice}
+                                  disabled={isFlexScheme}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                                      setDefaultPrice(val);
+                                    }
+                                  }}
+                                  className="w-full bg-transparent py-2 text-center text-sm text-gray-12 focus:outline-none disabled:cursor-not-allowed disabled:text-gray-9"
+                                />
+                                <span className="pr-2 text-xs text-gray-11">
+                                  USDC
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={isFlexScheme}
+                                onClick={() => {
+                                  const val =
+                                    parseFloat(defaultPrice || "0") + 0.01;
+                                  setDefaultPrice(
+                                    val.toFixed(6).replace(/\.?0+$/, ""),
+                                  );
+                                }}
+                                className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-r-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
+                              >
+                                <PlusIcon className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </Tooltip.Trigger>
+                          {isFlexScheme && (
+                            <Tooltip.Portal>
+                              <Tooltip.Content
+                                side="top"
+                                align="start"
+                                className="z-[70] max-w-xs rounded-md border border-gray-6 bg-gray-1 px-3 py-2 text-xs leading-5 text-gray-12 shadow-lg"
+                              >
+                                {disabledDefaultPriceTooltip}
+                                <Tooltip.Arrow className="fill-gray-1" />
+                              </Tooltip.Content>
+                            </Tooltip.Portal>
+                          )}
+                        </Tooltip.Root>
+                      </Tooltip.Provider>
                       {(() => {
                         const price = parseFloat(defaultPrice);
                         if (defaultPrice === "" || isNaN(price)) {
@@ -1403,7 +1478,7 @@ export function CreateUserTenantDialog({
                       </label>
                       <Select.Root
                         value={defaultScheme}
-                        onValueChange={setDefaultScheme}
+                        onValueChange={handleDefaultSchemeChange}
                       >
                         <Select.Trigger className="flex w-full items-center justify-between rounded-md border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-accent-8 focus:outline-none focus:ring-1 focus:ring-accent-8">
                           <Select.Value />
@@ -1442,6 +1517,19 @@ export function CreateUserTenantDialog({
                       </Select.Root>
                     </div>
                   </div>
+                  {isFlexScheme && (
+                    <div className="mt-4">
+                      <PricingRulesForm
+                        tenantId={createdTenantId ?? 0}
+                        scheme={defaultScheme}
+                        hasOpenApiLineage
+                        onRulesChange={setRootPricingRules}
+                        onDirtyChange={setRootPricingRulesDirty}
+                        onValidChange={setRootPricingRulesValid}
+                        showSaveButton={false}
+                      />
+                    </div>
+                  )}
                 </section>
 
                 {/* Register Only Option */}
