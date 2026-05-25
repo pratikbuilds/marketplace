@@ -128,10 +128,9 @@ function buildOnCapture(
 
     const reqInfo = result.request;
     const forwardedFor =
-      reqInfo.headers["x-forwarded-for"] ??
-      reqInfo.headers["x-real-ip"] ??
-      "unknown";
-    const [clientIp = "unknown"] = forwardedFor.split(",");
+      reqInfo.headers["x-forwarded-for"] ?? reqInfo.headers["x-real-ip"] ?? "";
+    const [rawClientIp = ""] = forwardedFor.split(",");
+    const clientIp = rawClientIp.trim() || null;
     const body = {
       ngx_request_id: reqInfo.headers["x-request-id"] ?? crypto.randomUUID(),
       tenant_name: site.tenantName,
@@ -143,7 +142,7 @@ function buildOnCapture(
       token_symbol: assetKey.slice(asset.chain.length + 1),
       mint_address: asset.token,
       request_path: reqInfo.path,
-      client_ip: clientIp.trim(),
+      client_ip: clientIp,
       request_method: reqInfo.method,
       metadata: null,
     };

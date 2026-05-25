@@ -34,6 +34,7 @@ async function createTenant(
   orgId: number,
   name: string,
   walletId: number | null,
+  opts: { defaultScheme?: string; openapiSpec?: Record<string, unknown> } = {},
 ) {
   return db
     .insertInto("tenants")
@@ -42,7 +43,10 @@ async function createTenant(
       organization_id: orgId,
       backend_url: "http://backend.example.test",
       default_price: 0.01,
-      default_scheme: "exact",
+      default_scheme: opts.defaultScheme ?? "exact",
+      openapi_spec: opts.openapiSpec
+        ? JSON.stringify(opts.openapiSpec)
+        : undefined,
       wallet_id: walletId,
       status: "active",
       is_active: true,
@@ -70,7 +74,7 @@ async function createEndpoint(
       path,
       path_pattern: path,
       price: opts.price ?? null,
-      scheme: opts.scheme ?? "exact",
+      scheme: opts.scheme === undefined ? "exact" : opts.scheme,
       priority: opts.priority ?? 100,
       is_active: true,
       openapi_source_paths: opts.openapi_source_paths ?? undefined,
@@ -236,7 +240,7 @@ await t.test("skips free endpoints", async (t) => {
   const wallet = await createWallet(org.id, walletConfig);
   const tenant = await createTenant(org.id, "free-test", wallet.id);
 
-  await createEndpoint(tenant.id, "/free-endpoint", { scheme: "free" });
+  await createEndpoint(tenant.id, "/free-endpoint", { price: 0 });
   await createEndpoint(tenant.id, "/paid-endpoint", { scheme: "exact" });
   await createTokenPrice(tenant.id, null);
 
@@ -246,6 +250,27 @@ await t.test("skips free endpoints", async (t) => {
 
   const paths = result.spec.paths as Record<string, unknown>;
   t.notOk(paths["/free-endpoint"]);
+  t.ok(paths["/paid-endpoint"]);
+});
+
+await t.test("skips legacy free scheme endpoints", async (t) => {
+  const org = await createOrg("Team", "team");
+  const walletConfig = {
+    solana: { "mainnet-beta": { address: "addr1" } },
+  };
+  const wallet = await createWallet(org.id, walletConfig);
+  const tenant = await createTenant(org.id, "legacy-free-test", wallet.id);
+
+  await createEndpoint(tenant.id, "/legacy-free", { scheme: "free" });
+  await createEndpoint(tenant.id, "/paid-endpoint", { scheme: "exact" });
+  await createTokenPrice(tenant.id, null);
+
+  const result = await buildTenantGatewaySpec(tenant.id);
+  t.not(result, null);
+  if (!result) return;
+
+  const paths = result.spec.paths as Record<string, unknown>;
+  t.notOk(paths["/legacy-free"]);
   t.ok(paths["/paid-endpoint"]);
 });
 
@@ -505,16 +530,18 @@ await t.test(
   },
 );
 
-await t.test("non-exact scheme produces no pricing rules", async (t) => {
+await t.test("flex tenant paid endpoint produces pricing rules", async (t) => {
   const org = await createOrg("Team", "team");
   const walletConfig = {
     solana: { "mainnet-beta": { address: "addr1" } },
   };
   const wallet = await createWallet(org.id, walletConfig);
-  const tenant = await createTenant(org.id, "flex-test", wallet.id);
+  const tenant = await createTenant(org.id, "flex-test", wallet.id, {
+    defaultScheme: "flex",
+  });
 
   await createEndpoint(tenant.id, "/flex-endpoint", {
-    scheme: "flex",
+    scheme: "exact",
     price: 5000,
   });
   await createTokenPrice(tenant.id, null);
@@ -526,8 +553,166 @@ await t.test("non-exact scheme produces no pricing rules", async (t) => {
   const paths = result.spec.paths as Record<string, unknown>;
   const pathEntry = paths["/flex-endpoint"] as Record<string, unknown>;
   const getOp = pathEntry.get as Record<string, unknown>;
-  t.notOk(getOp["x-faremeter-pricing"]);
+  const pricing = getOp["x-faremeter-pricing"] as Record<string, unknown>;
+  const rules = pricing.rules as Record<string, unknown>[];
+  t.matchOnly(rules, [{ match: "true", capture: "5000000" }]);
 });
+
+await t.test(
+  "imported OpenAPI authorize and capture pricing is preserved and marks operation flex",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { devnet: { address: "recipient1" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const importedSpec = {
+      openapi: "3.0.3",
+      info: { title: "Dynamic API", version: "1.0.0" },
+      "x-faremeter-assets": {
+        "usdc-sol": {
+          chain: "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+          token: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          decimals: 6,
+          recipient: "recipient1",
+        },
+      },
+      "x-faremeter-pricing": {
+        rates: { "usdc-sol": 1 },
+        rules: [{ match: "$", capture: "10000" }],
+      },
+      paths: {
+        "/v1/chat/completions": {
+          post: {
+            summary: "Token-metered chat completion",
+            "x-faremeter-pricing": {
+              rules: [
+                {
+                  match: '$[?@.request.body.model == "gpt-4o"]',
+                  authorize:
+                    "(jsonSize($.request.body.messages) / 4 * 10 + coalesce($.request.body.max_tokens, 1024) * 30) * 115 / 100",
+                  capture:
+                    "$.response.body.usage.prompt_tokens * 10 + $.response.body.usage.completion_tokens * 30",
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const tenant = await createTenant(org.id, "dynamic-flex", wallet.id, {
+      defaultScheme: "exact",
+      openapiSpec: importedSpec,
+    });
+
+    const endpoint = await createEndpoint(tenant.id, "/v1/chat/completions", {
+      openapi_source_paths: ["/v1/chat/completions"],
+      http_method: "POST",
+      price: 1,
+      scheme: null,
+    });
+    await createTokenPrice(tenant.id, null, {
+      network: "solana-devnet",
+      mint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    });
+
+    const result = await buildTenantGatewaySpec(tenant.id);
+    t.not(result, null);
+    if (!result) return;
+
+    t.same(result.operationKeyToEndpointId, {
+      "POST /v1/chat/completions": endpoint.id,
+    });
+    t.same(result.operationKeyToScheme, {
+      "POST /v1/chat/completions": "flex",
+    });
+    t.equal(
+      (result.spec.info as Record<string, unknown>).title,
+      "dynamic-flex",
+    );
+    const assets = result.spec["x-faremeter-assets"] as Record<string, unknown>;
+    t.ok(assets["solana-devnet-USDC"]);
+    t.notOk(
+      assets["usdc-sol"],
+      "imported assets are not merged into marketplace runtime config",
+    );
+    const rootPricing = result.spec["x-faremeter-pricing"] as Record<
+      string,
+      unknown
+    >;
+    t.matchOnly(rootPricing.rates, { "solana-devnet-USDC": 1 });
+    t.same(rootPricing.rules, importedSpec["x-faremeter-pricing"].rules);
+
+    const paths = result.spec.paths as Record<string, unknown>;
+    const pathEntry = paths["/v1/chat/completions"] as Record<string, unknown>;
+    const post = pathEntry.post as Record<string, unknown>;
+    const pricing = post["x-faremeter-pricing"] as Record<string, unknown>;
+    t.matchOnly(
+      pricing.rules,
+      importedSpec.paths["/v1/chat/completions"].post["x-faremeter-pricing"]
+        .rules,
+    );
+  },
+);
+
+await t.test(
+  "imported OpenAPI pricing keeps zero-price endpoint payable",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { devnet: { address: "recipient1" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const importedRules = [
+      {
+        match: "$",
+        authorize: "1000000",
+        capture: "$.response.body.total * 10000",
+      },
+    ];
+    const importedSpec = {
+      openapi: "3.0.3",
+      info: { title: "Dynamic API", version: "1.0.0" },
+      paths: {
+        "/v1/usage": {
+          post: {
+            summary: "Usage-priced endpoint",
+            "x-faremeter-pricing": { rules: importedRules },
+          },
+        },
+      },
+    };
+    const tenant = await createTenant(org.id, "zero-price-flex", wallet.id, {
+      defaultScheme: "flex",
+      openapiSpec: importedSpec,
+    });
+
+    const endpoint = await createEndpoint(tenant.id, "/v1/usage", {
+      openapi_source_paths: ["/v1/usage"],
+      http_method: "POST",
+      price: 0,
+      scheme: null,
+    });
+    await createTokenPrice(tenant.id, null, {
+      network: "solana-devnet",
+    });
+
+    const result = await buildTenantGatewaySpec(tenant.id);
+    t.not(result, null);
+    if (!result) return;
+
+    t.same(result.operationKeyToEndpointId, {
+      "POST /v1/usage": endpoint.id,
+    });
+    t.same(result.operationKeyToScheme, { "POST /v1/usage": "flex" });
+
+    const paths = result.spec.paths as Record<string, unknown>;
+    const pathEntry = paths["/v1/usage"] as Record<string, unknown>;
+    const post = pathEntry.post as Record<string, unknown>;
+    const pricing = post["x-faremeter-pricing"] as Record<string, unknown>;
+    t.same(pricing.rules, importedRules);
+  },
+);
 
 await t.test(
   "endpoint-level price on unconfigured network produces no rules without fallback",

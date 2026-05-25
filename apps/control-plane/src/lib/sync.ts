@@ -3,6 +3,7 @@ import { db } from "../db/instance.js";
 import { logger } from "../logger.js";
 import { buildTenantDomain, toDomainInfo } from "./domain.js";
 import { buildTenantGatewaySpecFromData } from "./gateway-spec-builder.js";
+import { DEFAULT_TENANT_SCHEME } from "./schemas.js";
 import { extractGatewaySpec, generateConfig } from "@faremeter/gateway-nginx";
 import { extractSpec } from "@faremeter/middleware-openapi";
 
@@ -62,6 +63,7 @@ export async function buildNodeConfig(nodeId: number) {
       "tenants.backend_url",
       "tenants.wallet_id",
       "tenants.default_scheme",
+      "tenants.openapi_spec",
       "tenants.upstream_auth_header",
       "tenants.upstream_auth_value",
       "tenants.org_slug",
@@ -111,6 +113,7 @@ export async function buildNodeConfig(nodeId: number) {
       tenantId: tenant.id,
       tenantName: tenant.name,
       defaultScheme: tenant.default_scheme,
+      openapiSpec: tenant.openapi_spec,
       walletConfig: tenant.wallet_config,
       endpoints: endpoints.map((e) => ({
         id: e.id,
@@ -140,7 +143,7 @@ export async function buildNodeConfig(nodeId: number) {
       continue;
     }
 
-    const { spec, operationKeyToEndpointId } = specResult;
+    const { spec, operationKeyToEndpointId, operationKeyToScheme } = specResult;
     const parsedSpec = extractGatewaySpec(spec);
     const faremeterSpec = extractSpec(spec);
 
@@ -150,7 +153,15 @@ export async function buildNodeConfig(nodeId: number) {
     const assets = [
       ...new Set(Object.values(faremeterSpec.assets).map((a) => a.token)),
     ];
-    const capabilities = { schemes: ["exact"], networks, assets };
+    const schemes =
+      Object.keys(operationKeyToScheme).length > 0
+        ? [...new Set(Object.values(operationKeyToScheme))]
+        : [tenant.default_scheme ?? DEFAULT_TENANT_SCHEME];
+    const capabilities = {
+      schemes,
+      networks,
+      assets,
+    };
 
     const extraDirectives: string[] = [];
     if (tenant.upstream_auth_header && tenant.upstream_auth_value) {

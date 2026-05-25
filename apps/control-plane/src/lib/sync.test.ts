@@ -42,6 +42,7 @@ async function createTenant(
     org_slug?: string | null;
     upstream_auth_header?: string | null;
     upstream_auth_value?: string | null;
+    default_scheme?: string;
   } = {},
 ) {
   return db
@@ -51,7 +52,7 @@ async function createTenant(
       organization_id: orgId,
       backend_url: "http://backend.example.test",
       default_price: 0.01,
-      default_scheme: "exact",
+      default_scheme: opts.default_scheme ?? "exact",
       wallet_id: walletId,
       status: "active",
       is_active: true,
@@ -190,6 +191,39 @@ await t.test(
 );
 
 await t.test(
+  "sidecar capabilities use emitted operation schemes",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { "mainnet-beta": { address: "SoLAddr123" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const node = await createNode("node-1");
+    const tenant = await createTenant(org.id, "flex-api", wallet.id, {
+      org_slug: "team",
+      default_scheme: "flex",
+    });
+    await linkTenantToNode(tenant.id, node.id);
+    await createEndpoint(tenant.id, "/items/{id}", { scheme: "exact" });
+    await createTokenPrice(tenant.id, null);
+
+    const result = await buildNodeConfig(node.id);
+    t.not(result, null);
+    if (!result) return;
+
+    const site = result.sidecar.sites["team--flex-api"] as Record<
+      string,
+      unknown
+    >;
+    t.same(site.capabilities, {
+      schemes: ["exact"],
+      networks: ["solana-mainnet-beta"],
+      assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
+    });
+  },
+);
+
+await t.test(
   "tenant populates config, gateway, and sidecar keys",
   async (t) => {
     const org = await createOrg("Team", "team");
@@ -202,7 +236,7 @@ await t.test(
       org_slug: "team",
     });
     await linkTenantToNode(tenant.id, node.id);
-    await createEndpoint(tenant.id, "/items/{id}", { scheme: "exact" });
+    await createEndpoint(tenant.id, "/items/{id}", { scheme: "flex" });
     await createTokenPrice(tenant.id, null);
 
     const result = await buildNodeConfig(node.id);
@@ -228,7 +262,7 @@ await t.test(
     t.equal(site.tenantName, "my-api");
     t.equal(site.orgSlug, "team");
     t.same(site.capabilities, {
-      schemes: ["exact"],
+      schemes: ["flex"],
       networks: ["solana-mainnet-beta"],
       assets: ["EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"],
     });

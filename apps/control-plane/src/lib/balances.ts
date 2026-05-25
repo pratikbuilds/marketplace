@@ -286,7 +286,10 @@ export async function fetchWalletBalances(addresses: {
 export const BALANCE_CACHE_TTL_MS = 60 * 1000; // 1 minute
 
 export interface WalletConfig {
-  solana?: { "mainnet-beta"?: { address?: string; key?: string } };
+  solana?: {
+    "mainnet-beta"?: { address?: string; key?: string };
+    devnet?: { address?: string; key?: string };
+  };
   evm?: {
     base?: { address?: string; key?: string };
     polygon?: { address?: string; key?: string };
@@ -300,7 +303,10 @@ export function extractAddresses(config: WalletConfig | null): {
 } {
   if (!config) return { solana: null, evm: null };
   return {
-    solana: config.solana?.["mainnet-beta"]?.address ?? null,
+    solana:
+      config.solana?.["mainnet-beta"]?.address ??
+      config.solana?.devnet?.address ??
+      null,
     evm: config.evm?.base?.address ?? null,
   };
 }

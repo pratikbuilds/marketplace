@@ -37,6 +37,20 @@ await t.test("extractAddresses", async (t) => {
     t.equal(result.evm, null);
   });
 
+  await t.test("extracts solana devnet address", async (t) => {
+    const config: WalletConfig = {
+      solana: {
+        devnet: {
+          address: "devnet-sol-address",
+          key: "enc:secret",
+        },
+      },
+    };
+    const result = extractAddresses(config);
+    t.equal(result.solana, "devnet-sol-address");
+    t.equal(result.evm, null);
+  });
+
   await t.test("extracts evm address from base", async (t) => {
     const config: WalletConfig = {
       evm: {
