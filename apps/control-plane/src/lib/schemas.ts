@@ -366,11 +366,13 @@ export const CreateTokenPriceSchema = type({
   amount: "number.integer >= 0",
   "decimals?": "0 <= number.integer <= 18",
   "endpoint_id?": "number.integer > 0 | null",
+  "payout_splits?": "unknown",
 });
 
 export const UpdateTokenPriceSchema = type({
   "amount?": "number.integer >= 0",
   "decimals?": "0 <= number.integer <= 18",
+  "payout_splits?": "unknown",
 });
 
 export const AdminAssignNodeSchema = type({

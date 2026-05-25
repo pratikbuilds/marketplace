@@ -13,11 +13,17 @@ const TokenPriceResponse = type({
   "endpoint_id?": "number | null",
   "amount?": "number",
   "decimals?": "number",
+  "payout_splits?": "unknown",
   "+": "delete",
 });
 
 const TokenPriceListResponse = type({
   data: TokenPriceResponse.array(),
+  "+": "delete",
+});
+
+const ErrorResponse = type({
+  "error?": "string",
   "+": "delete",
 });
 
@@ -97,6 +103,7 @@ async function createTokenPrice(
     mint?: string;
     network?: string;
     amount?: number;
+    payoutSplits?: { recipient: string; bps: number }[];
   } = {},
 ) {
   return db
@@ -109,6 +116,9 @@ async function createTokenPrice(
       network: opts.network ?? "solana-mainnet-beta",
       amount: opts.amount ?? 1000,
       decimals: 6,
+      payout_splits: opts.payoutSplits
+        ? JSON.stringify(opts.payoutSplits)
+        : undefined,
     })
     .returning(["id"])
     .executeTakeFirstOrThrow();
@@ -356,6 +366,62 @@ await t.test("POST / (create)", async (t) => {
     t.equal(data.endpoint_id, endpoint.id);
   });
 
+  await t.test("creates token price with payout splits", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-proxy");
+
+    const res = await app.request(`/api/tenants/${tenant.id}/token-prices`, {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${user.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        token_symbol: "USDC",
+        mint_address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        network: "solana-devnet",
+        amount: 1000,
+        payout_splits: [
+          { recipient: "ReceiverA", bps: 6500 },
+          { recipient: "ReceiverB", bps: 3500 },
+        ],
+      }),
+    });
+    t.equal(res.status, 201);
+    const data = TokenPriceResponse.assert(await res.json());
+    t.matchOnly(data.payout_splits, [
+      { recipient: "ReceiverA", bps: 6500 },
+      { recipient: "ReceiverB", bps: 3500 },
+    ]);
+  });
+
+  await t.test("rejects payout splits that do not sum to 10000", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-proxy");
+
+    const res = await app.request(`/api/tenants/${tenant.id}/token-prices`, {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${user.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        token_symbol: "USDC",
+        mint_address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+        network: "solana-devnet",
+        amount: 1000,
+        payout_splits: [{ recipient: "ReceiverA", bps: 9000 }],
+      }),
+    });
+    t.equal(res.status, 400);
+    const data = ErrorResponse.assert(await res.json());
+    t.match(data.error, /sum to 10000/);
+  });
+
   await t.test("returns 400 for missing required fields", async (t) => {
     const user = await createUser("member@example.com");
     const org = await createOrg("Team", "team");
@@ -545,6 +611,37 @@ await t.test("PUT /:id (update)", async (t) => {
     t.equal(res.status, 200);
     const data = TokenPriceResponse.assert(await res.json());
     t.equal(data.decimals, 8);
+  });
+
+  await t.test("updates payout splits", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-proxy");
+    const tp = await createTokenPrice(tenant.id);
+
+    const res = await app.request(
+      `/api/tenants/${tenant.id}/token-prices/${tp.id}`,
+      {
+        method: "PUT",
+        headers: {
+          Cookie: `auth_token=${user.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          payout_splits: [
+            { recipient: "ReceiverA", bps: 5000 },
+            { recipient: "ReceiverB", bps: 5000 },
+          ],
+        }),
+      },
+    );
+    t.equal(res.status, 200);
+    const data = TokenPriceResponse.assert(await res.json());
+    t.matchOnly(data.payout_splits, [
+      { recipient: "ReceiverA", bps: 5000 },
+      { recipient: "ReceiverB", bps: 5000 },
+    ]);
   });
 
   await t.test("returns 400 for empty body", async (t) => {

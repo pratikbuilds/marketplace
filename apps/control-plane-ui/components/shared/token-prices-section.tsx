@@ -10,7 +10,11 @@ import {
 } from "@radix-ui/react-icons";
 import { api } from "@/lib/api/client";
 import { useToast } from "@/components/ui/toast";
-import { type TokenPrice, type SupportedToken } from "@/lib/types/api";
+import {
+  type PayoutSplit,
+  type TokenPrice,
+  type SupportedToken,
+} from "@/lib/types/api";
 
 interface TokenPricesSectionProps {
   tenantId: number;
@@ -90,6 +94,25 @@ export function TokenPricesSection({
     }
   };
 
+  const handleUpdateSplits = async (
+    tp: TokenPrice,
+    payoutSplits: PayoutSplit[] | null,
+  ) => {
+    try {
+      await api.put(`/api/tenants/${tenantId}/token-prices/${tp.id}`, {
+        payout_splits: payoutSplits,
+      });
+      toast({ title: `${tp.token_symbol} payout updated`, variant: "default" });
+      void fetchPrices();
+      onUpdated?.();
+    } catch (err) {
+      toast({
+        title: err instanceof Error ? err.message : "Failed to update payout",
+        variant: "error",
+      });
+    }
+  };
+
   const handleAdd = async (token: SupportedToken) => {
     try {
       await api.post(`/api/tenants/${tenantId}/token-prices`, {
@@ -153,6 +176,9 @@ export function TokenPricesSection({
                   key={tp.id}
                   tokenPrice={tp}
                   onSave={(newAmount) => void handleUpdateAmount(tp, newAmount)}
+                  onSaveSplits={(payoutSplits) =>
+                    void handleUpdateSplits(tp, payoutSplits)
+                  }
                   onDelete={() => void handleDelete(tp)}
                 />
               ))}
@@ -176,65 +202,194 @@ export function TokenPricesSection({
 function TokenPriceRow({
   tokenPrice,
   onSave,
+  onSaveSplits,
   onDelete,
 }: {
   tokenPrice: TokenPrice;
   onSave: (newAmount: string) => void;
+  onSaveSplits: (payoutSplits: PayoutSplit[] | null) => void;
   onDelete: () => void;
 }) {
   const displayAmount = (Number(tokenPrice.amount) / 1_000_000).toString();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(displayAmount);
+  const [splitsOpen, setSplitsOpen] = useState(false);
+  const [splits, setSplits] = useState<PayoutSplit[]>(
+    tokenPrice.payout_splits ?? [],
+  );
+  const totalBps = splits.reduce((sum, split) => sum + split.bps, 0);
+  const splitError = validatePayoutSplits(splits);
+
+  useEffect(() => {
+    setSplits(tokenPrice.payout_splits ?? []);
+  }, [tokenPrice.payout_splits]);
+
+  function updateSplit(index: number, patch: Partial<PayoutSplit>) {
+    setSplits((current) =>
+      current.map((split, i) => (i === index ? { ...split, ...patch } : split)),
+    );
+  }
 
   return (
-    <div className="flex items-center gap-2">
-      <span className="w-16 text-xs font-medium text-gray-12">
-        {tokenPrice.token_symbol}
-      </span>
-      <span className="text-[10px] text-gray-9 truncate w-20">
-        {tokenPrice.network}
-      </span>
-      {editing ? (
-        <input
-          type="text"
-          inputMode="decimal"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={() => {
-            onSave(value);
-            setEditing(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
+    <div className="rounded border border-gray-6 bg-gray-2">
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        <span className="w-16 text-xs font-medium text-gray-12">
+          {tokenPrice.token_symbol}
+        </span>
+        <span className="w-20 truncate text-[10px] text-gray-9">
+          {tokenPrice.network}
+        </span>
+        {editing ? (
+          <input
+            type="text"
+            inputMode="decimal"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={() => {
               onSave(value);
               setEditing(false);
-            }
-          }}
-          autoFocus
-          className="flex-1 rounded border border-gray-6 bg-gray-2 px-2 py-1 text-xs text-gray-12 focus:outline-none focus:border-accent-8"
-        />
-      ) : (
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                onSave(value);
+                setEditing(false);
+              }
+            }}
+            autoFocus
+            className="flex-1 rounded border border-gray-6 bg-gray-2 px-2 py-1 text-xs text-gray-12 focus:border-accent-8 focus:outline-none"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setValue(displayAmount);
+              setEditing(true);
+            }}
+            className="flex-1 cursor-pointer text-left text-xs text-gray-11 hover:text-gray-12"
+          >
+            ${displayAmount}
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => {
-            setValue(displayAmount);
-            setEditing(true);
-          }}
-          className="flex-1 text-left text-xs text-gray-11 hover:text-gray-12 cursor-pointer"
+          onClick={() => setSplitsOpen((open) => !open)}
+          className="text-[10px] text-accent-11 hover:text-accent-12"
         >
-          ${displayAmount}
+          {tokenPrice.payout_splits ? "Splits" : "Single"}
         </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="p-0.5 text-gray-9 hover:text-red-400"
+          title="Remove token"
+        >
+          <Cross2Icon className="h-3 w-3" />
+        </button>
+      </div>
+
+      {splitsOpen && (
+        <div className="space-y-2 border-t border-gray-6 p-2">
+          {splits.length === 0 ? (
+            <p className="text-[10px] leading-4 text-gray-9">
+              This token pays to the configured wallet address.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {splits.map((split, index) => (
+                <div
+                  key={index}
+                  className="grid grid-cols-[minmax(0,1fr)_72px_20px] gap-1.5"
+                >
+                  <input
+                    type="text"
+                    value={split.recipient}
+                    onChange={(e) =>
+                      updateSplit(index, { recipient: e.target.value })
+                    }
+                    placeholder="Recipient address"
+                    className="h-8 min-w-0 rounded border border-gray-6 bg-gray-3 px-2 font-mono text-[11px] text-gray-12 placeholder-gray-9 focus:border-accent-8 focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    value={split.bps}
+                    onChange={(e) =>
+                      updateSplit(index, { bps: Number(e.target.value) })
+                    }
+                    className="h-8 rounded border border-gray-6 bg-gray-3 px-2 text-xs text-gray-12 focus:border-accent-8 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSplits((current) =>
+                        current.filter((_, i) => i !== index),
+                      )
+                    }
+                    className="flex h-8 items-center justify-center text-gray-9 hover:text-red-400"
+                    title="Remove split"
+                  >
+                    <Cross2Icon className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={`text-[10px] ${
+                splitError ? "text-red-300" : "text-gray-9"
+              }`}
+            >
+              {splits.length === 0 ? "10000 bps default" : `${totalBps} bps`}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  setSplits((current) =>
+                    current.length === 0
+                      ? [
+                          { recipient: "", bps: 5000 },
+                          { recipient: "", bps: 5000 },
+                        ]
+                      : [...current, { recipient: "", bps: 0 }],
+                  )
+                }
+                className="flex items-center gap-1 text-[10px] text-accent-11 hover:text-accent-12"
+              >
+                <PlusIcon className="h-3 w-3" />
+                Add split
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onSaveSplits(splits.length === 0 ? null : splits)
+                }
+                disabled={splitError !== null}
+                className="rounded bg-accent-9 px-2 py-1 text-[10px] font-medium text-white hover:bg-accent-10 disabled:opacity-50"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+          {splitError && (
+            <p className="text-[10px] text-red-300">{splitError}</p>
+          )}
+        </div>
       )}
-      <button
-        type="button"
-        onClick={onDelete}
-        className="p-0.5 text-gray-9 hover:text-red-400"
-        title="Remove token"
-      >
-        <Cross2Icon className="h-3 w-3" />
-      </button>
     </div>
   );
+}
+
+function validatePayoutSplits(splits: PayoutSplit[]): string | null {
+  if (splits.length === 0) return null;
+  for (const split of splits) {
+    if (split.recipient.trim() === "") return "Recipient address required";
+    if (!Number.isInteger(split.bps) || split.bps <= 0) {
+      return "Bps values must be positive integers";
+    }
+  }
+  const total = splits.reduce((sum, split) => sum + split.bps, 0);
+  return total === 10000 ? null : "Bps total must equal 10000";
 }
 
 function AddTokenDropdown({

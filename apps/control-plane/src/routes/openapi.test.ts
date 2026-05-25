@@ -318,6 +318,49 @@ await t.test("POST /api/tenants/:tenantId/openapi/import", async (t) => {
     t.ok(data.error.includes("Invalid"));
   });
 
+  await t.test("rejects invalid split payout assets", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-tenant");
+
+    const res = await app.request(`/api/tenants/${tenant.id}/openapi/import`, {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${user.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        spec: {
+          openapi: "3.0.0",
+          info: { title: "Test", version: "1.0.0" },
+          "x-faremeter-assets": {
+            usdc: {
+              chain: "solana-devnet",
+              token: "USDC",
+              decimals: 6,
+              splits: [{ recipient: "ReceiverA", bps: 9000 }],
+            },
+          },
+          paths: {
+            "/test": {
+              post: {
+                "x-faremeter-pricing": {
+                  rates: { usdc: 1 },
+                  rules: [{ match: "$", capture: "1" }],
+                },
+              },
+            },
+          },
+        },
+      }),
+    });
+
+    t.equal(res.status, 400);
+    const data = ErrorResponse.assert(await res.json());
+    t.ok(data.error.includes("Invalid"));
+  });
+
   await t.test("imports valid spec and creates endpoints", async (t) => {
     const user = await createUser("member@example.com");
     const org = await createOrg("Team", "team");

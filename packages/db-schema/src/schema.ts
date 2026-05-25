@@ -198,6 +198,7 @@ export interface TokenPricesTable {
   network: string;
   amount: ColumnType<string, number | string, number | string>;
   decimals: ColumnType<number, number | undefined, number>;
+  payout_splits: ColumnType<unknown, string | null | undefined, string | null>;
   created_at: AutoDateColumn;
   updated_at: OptionalDateColumn;
 }

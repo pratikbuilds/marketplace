@@ -244,6 +244,7 @@ export async function setupTestSchema(
     .addColumn("network", "text", (col) => col.notNull())
     .addColumn("amount", "integer", (col) => col.notNull())
     .addColumn("decimals", "integer", (col) => col.defaultTo(6))
+    .addColumn("payout_splits", "text")
     .addColumn("created_at", "text", (col) =>
       col.defaultTo(sql`CURRENT_TIMESTAMP`).notNull(),
     )

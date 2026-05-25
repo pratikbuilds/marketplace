@@ -65,6 +65,12 @@ type TokenPriceRow = {
   amount: string;
   decimals: number;
   endpoint_id: number | null;
+  payout_splits?: unknown;
+};
+
+type PayoutSplit = {
+  recipient: string;
+  bps: number;
 };
 
 type EndpointRow = {
@@ -106,6 +112,54 @@ function getImportedPricingRules(
   return getPricingRulesFromObject(obj) as Record<string, unknown>[] | null;
 }
 
+function getImportedAssets(
+  importedSpec: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const assets = getRecordProperty(importedSpec, "x-faremeter-assets");
+  return assets ? structuredClone(assets) : {};
+}
+
+function parsePayoutSplits(value: unknown): PayoutSplit[] | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    if (value.trim() === "") return null;
+    return parsePayoutSplits(JSON.parse(value));
+  }
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+
+  const splits: PayoutSplit[] = [];
+  for (const split of value) {
+    if (
+      !isRecord(split) ||
+      typeof split.recipient !== "string" ||
+      typeof split.bps !== "number"
+    ) {
+      return null;
+    }
+    splits.push({ recipient: split.recipient, bps: split.bps });
+  }
+  return splits;
+}
+
+function buildAsset(
+  tp: TokenPriceRow,
+  recipient: string,
+): Record<string, unknown> {
+  const asset: Record<string, unknown> = {
+    chain: tp.network,
+    token: tp.mint_address,
+    decimals: tp.decimals,
+    recipient,
+  };
+  const splits = parsePayoutSplits(tp.payout_splits);
+  if (splits) {
+    asset.splits = splits;
+  }
+  return asset;
+}
+
 function getImportedOperationPricingRules(
   importedSpec: Record<string, unknown> | null,
   path: string,
@@ -137,7 +191,7 @@ export function buildTenantGatewaySpecFromData(
   const { endpoints, tokenPrices } = input;
   const warnings: string[] = [];
   const importedSpec = parseImportedSpec(input.openapiSpec);
-  const assets: Record<string, unknown> = {};
+  const assets: Record<string, unknown> = getImportedAssets(importedSpec);
 
   // Build x-faremeter-assets from tenant-level token prices (endpoint_id IS NULL)
   const tenantLevelPrices = tokenPrices.filter((tp) => tp.endpoint_id === null);
@@ -155,12 +209,7 @@ export function buildTenantGatewaySpecFromData(
       continue;
     }
 
-    assets[alias] = {
-      chain: tp.network,
-      token: tp.mint_address,
-      decimals: tp.decimals,
-      recipient,
-    };
+    assets[alias] = buildAsset(tp, recipient);
   }
 
   // Build a lookup map for endpoint-level token prices, keyed by endpoint_id
@@ -278,14 +327,19 @@ export function buildTenantGatewaySpecFromData(
   // Rules use absolute atomic amounts as capture values, so rates are 1:1 —
   // the evaluator multiplies coefficient * rate, and with rate=1 the result
   // equals the capture value directly.
-  const rates: Record<string, unknown> = {};
-  for (const alias of Object.keys(assets)) {
-    rates[alias] = 1;
-  }
   const importedRootPricing = getRecordProperty(
     importedSpec,
     "x-faremeter-pricing",
   );
+  const importedRates = getRecordProperty(importedRootPricing, "rates");
+  const rates: Record<string, unknown> = importedRates
+    ? structuredClone(importedRates)
+    : {};
+  for (const alias of Object.keys(assets)) {
+    if (rates[alias] === undefined) {
+      rates[alias] = 1;
+    }
+  }
 
   const spec: Record<string, unknown> = {
     openapi: "3.0.3",
@@ -405,12 +459,7 @@ function buildPricingRules(
           );
           continue;
         }
-        result.additionalAssets[alias] = {
-          chain: tp.network,
-          token: tp.mint_address,
-          decimals: tp.decimals,
-          recipient,
-        };
+        result.additionalAssets[alias] = buildAsset(tp, recipient);
       }
       result.rules.push({ match: "true", capture: tp.amount });
     }

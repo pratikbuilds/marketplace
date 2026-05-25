@@ -90,6 +90,12 @@ export interface TokenPrice {
   network: string;
   amount: string;
   decimals: number;
+  payout_splits: PayoutSplit[] | null;
+}
+
+export interface PayoutSplit {
+  recipient: string;
+  bps: number;
 }
 
 export interface SupportedToken {

@@ -94,6 +94,7 @@ async function createTokenPrice(
     network?: string;
     amount?: number;
     decimals?: number;
+    payoutSplits?: { recipient: string; bps: number }[];
   } = {},
 ) {
   return db
@@ -106,6 +107,9 @@ async function createTokenPrice(
       network: opts.network ?? "solana-mainnet-beta",
       amount: opts.amount ?? 1000,
       decimals: opts.decimals ?? 6,
+      payout_splits: opts.payoutSplits
+        ? JSON.stringify(opts.payoutSplits)
+        : undefined,
     })
     .returning(["id"])
     .executeTakeFirstOrThrow();
@@ -198,6 +202,52 @@ await t.test("builds spec with correct structure", async (t) => {
   // price=5000 * tenant-level amount=1000 = 5000000
   t.equal(rule0.capture, "5000000");
 });
+
+await t.test(
+  "token price payout splits are emitted on generated assets",
+  async (t) => {
+    const org = await createOrg("Team", "team");
+    const walletConfig = {
+      solana: { devnet: { address: "LegacyRecipient" } },
+    };
+    const wallet = await createWallet(org.id, walletConfig);
+    const tenant = await createTenant(org.id, "split-api", wallet.id, {
+      defaultScheme: "flex",
+    });
+
+    await createEndpoint(tenant.id, "/split", {
+      scheme: "flex",
+      http_method: "POST",
+    });
+    await createTokenPrice(tenant.id, null, {
+      network: "solana-devnet",
+      mint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      payoutSplits: [
+        { recipient: "ReceiverA", bps: 7000 },
+        { recipient: "ReceiverB", bps: 3000 },
+      ],
+    });
+
+    const result = await buildTenantGatewaySpec(tenant.id);
+    t.not(result, null);
+    if (!result) return;
+
+    const assets = result.spec["x-faremeter-assets"] as Record<
+      string,
+      Record<string, unknown>
+    >;
+    t.matchOnly(assets["solana-devnet-USDC"], {
+      chain: "solana-devnet",
+      token: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      decimals: 6,
+      recipient: "LegacyRecipient",
+      splits: [
+        { recipient: "ReceiverA", bps: 7000 },
+        { recipient: "ReceiverB", bps: 3000 },
+      ],
+    });
+  },
+);
 
 await t.test(
   "endpoint with null scheme inherits tenant default exact pricing",
@@ -575,6 +625,10 @@ await t.test(
           token: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
           decimals: 6,
           recipient: "recipient1",
+          splits: [
+            { recipient: "recipient1", bps: 6000 },
+            { recipient: "recipient2", bps: 4000 },
+          ],
         },
       },
       "x-faremeter-pricing": {
@@ -632,15 +686,18 @@ await t.test(
     );
     const assets = result.spec["x-faremeter-assets"] as Record<string, unknown>;
     t.ok(assets["solana-devnet-USDC"]);
-    t.notOk(
+    t.matchOnly(
       assets["usdc-sol"],
-      "imported assets are not merged into marketplace runtime config",
+      importedSpec["x-faremeter-assets"]["usdc-sol"],
     );
     const rootPricing = result.spec["x-faremeter-pricing"] as Record<
       string,
       unknown
     >;
-    t.matchOnly(rootPricing.rates, { "solana-devnet-USDC": 1 });
+    t.matchOnly(rootPricing.rates, {
+      "usdc-sol": 1,
+      "solana-devnet-USDC": 1,
+    });
     t.same(rootPricing.rules, importedSpec["x-faremeter-pricing"].rules);
 
     const paths = result.spec.paths as Record<string, unknown>;

@@ -150,6 +150,12 @@ type PaymentRequirement = {
   asset?: unknown;
   maxAmountRequired?: unknown;
   amount?: unknown;
+  extra?: unknown;
+};
+
+type RequirementSplit = {
+  recipient: string;
+  bps: number;
 };
 
 type PricingRule = {
@@ -451,7 +457,9 @@ async function createFlexTokenPrice(
   }
 }
 
-function buildDynamicPricingSpec(recipient: Address): Record<string, unknown> {
+function buildDynamicPricingSpec(
+  splits: { recipient: Address; bps: number }[],
+): Record<string, unknown> {
   const paths = Object.fromEntries(
     FLEX_PRICING_SCENARIOS.map((scenario) => [
       scenario.path,
@@ -477,7 +485,8 @@ function buildDynamicPricingSpec(recipient: Address): Record<string, unknown> {
         chain: solana.normalizeNetworkId(SOLANA_CLUSTER),
         token: SOLANA_USDC.address,
         decimals: 6,
-        recipient,
+        recipient: splits[0]?.recipient,
+        splits,
       },
     },
     "x-faremeter-pricing": {
@@ -512,12 +521,12 @@ async function waitForTenantActive(
 async function importDynamicFlexEndpoint(
   tenantId: number,
   authCookie: string,
-  recipient: Address,
+  splits: { recipient: Address; bps: number }[],
 ): Promise<Map<string, EndpointRecord>> {
   await apiJson(`/api/tenants/${tenantId}/openapi/import`, authCookie, {
     method: "POST",
     body: JSON.stringify({
-      spec: buildDynamicPricingSpec(recipient),
+      spec: buildDynamicPricingSpec(splits),
     }),
   });
 
@@ -709,10 +718,31 @@ function getAccepts(body: unknown): PaymentRequirement[] {
   );
 }
 
+function getRequirementSplits(
+  requirement: PaymentRequirement,
+): RequirementSplit[] {
+  if (
+    typeof requirement.extra !== "object" ||
+    requirement.extra === null ||
+    !("splits" in requirement.extra)
+  ) {
+    return [];
+  }
+  const splits = requirement.extra.splits;
+  if (!Array.isArray(splits)) return [];
+  return splits.filter((split): split is RequirementSplit => {
+    if (typeof split !== "object" || split === null) return false;
+    const record = split as Record<string, unknown>;
+    return (
+      typeof record.recipient === "string" && typeof record.bps === "number"
+    );
+  });
+}
+
 async function waitForFlexPaymentRequired(
   url: string,
   scenario: FlexPricingScenario,
-): Promise<void> {
+): Promise<RequirementSplit[]> {
   const timeoutAt = Date.now() + 90_000;
   let lastError: unknown;
 
@@ -738,7 +768,22 @@ async function waitForFlexPaymentRequired(
           );
         });
 
-        if (matching) return;
+        if (matching) {
+          const splits = getRequirementSplits(matching);
+          const splitBpsTotal = splits.reduce(
+            (sum, split) => sum + split.bps,
+            0,
+          );
+          if (splits.length >= 2 && splitBpsTotal === 10_000) {
+            return splits;
+          }
+          lastError = new Error(
+            `402 Flex requirement did not include expected splits: ${JSON.stringify(
+              matching,
+            )}`,
+          );
+          continue;
+        }
         lastError = new Error(
           `402 did not include expected Flex requirement: ${JSON.stringify(
             body,
@@ -1005,10 +1050,14 @@ async function main() {
     ? await findScenarioEndpoints(tenant.id, authCookie)
     : await (async () => {
         const facilitator = await loadSigner(FACILITATOR_KEYPAIR_PATH);
+        const payer = await loadSigner(PAYER_KEYPAIR_PATH);
         const importedEndpoints = await importDynamicFlexEndpoint(
           tenant.id,
           authCookie,
-          facilitator.address,
+          [
+            { recipient: facilitator.address, bps: 6500 },
+            { recipient: payer.address, bps: 3500 },
+          ],
         );
         for (const scenario of FLEX_PRICING_SCENARIOS) {
           const endpoint = importedEndpoints.get(scenario.path);
@@ -1051,6 +1100,8 @@ async function main() {
       expectedCaptureAmount: number;
       paidTransactionId: number;
       paidTransactionHash: string | null;
+      splitBps: number[];
+      splitRecipients: string[];
     }[] = [];
 
     for (const scenario of FLEX_PRICING_SCENARIOS) {
@@ -1060,7 +1111,10 @@ async function main() {
       }
 
       const proxyUrl = proxyUrlFor(endpoint.path);
-      await waitForFlexPaymentRequired(proxyUrl, scenario);
+      const requirementSplits = await waitForFlexPaymentRequired(
+        proxyUrl,
+        scenario,
+      );
 
       const paidResponse = await fetchWithPayer(proxyUrl, {
         method: "POST",
@@ -1089,6 +1143,8 @@ async function main() {
         expectedCaptureAmount: scenario.expectedCaptureAmount,
         paidTransactionId: paidTransaction.id,
         paidTransactionHash: paidTransaction.tx_hash,
+        splitBps: requirementSplits.map((split) => split.bps),
+        splitRecipients: requirementSplits.map((split) => split.recipient),
       });
     }
     const finalTransactionCount = (await getTransactions(tenant.id, authCookie))

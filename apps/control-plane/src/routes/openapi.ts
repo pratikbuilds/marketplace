@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { db } from "../db/instance.js";
 import { endpointPathToOpenApiPath } from "../lib/openapi-sync.js";
+import { buildTenantGatewaySpec } from "../lib/gateway-spec-builder.js";
 import { syncToNode } from "../lib/sync.js";
 import { logger } from "../logger.js";
 import { requireTenantAccess } from "../middleware/auth.js";
@@ -67,6 +68,63 @@ function validateOpenApiSpec(spec: Record<string, unknown>): string[] {
       if (!path.startsWith("/")) {
         errors.push(`Path '${path}' must start with '/'`);
       }
+    }
+  }
+
+  return errors;
+}
+
+function validateFaremeterAssets(spec: Record<string, unknown>): string[] {
+  const assets = spec["x-faremeter-assets"];
+  if (assets === undefined) return [];
+  if (!isRecord(assets)) {
+    return ["x-faremeter-assets must be an object"];
+  }
+
+  const errors: string[] = [];
+  for (const [key, asset] of Object.entries(assets)) {
+    if (!isRecord(asset)) {
+      errors.push(`x-faremeter-assets["${key}"] must be an object`);
+      continue;
+    }
+    const splits = asset.splits;
+    if (splits === undefined) {
+      continue;
+    }
+    if (!Array.isArray(splits) || splits.length === 0) {
+      errors.push(`x-faremeter-assets["${key}"].splits must not be empty`);
+      continue;
+    }
+
+    let totalBps = 0;
+    for (const [index, split] of splits.entries()) {
+      if (!isRecord(split)) {
+        errors.push(
+          `x-faremeter-assets["${key}"].splits[${index}] must be an object`,
+        );
+        continue;
+      }
+      if (typeof split.recipient !== "string" || split.recipient === "") {
+        errors.push(
+          `x-faremeter-assets["${key}"].splits[${index}].recipient must be a non-empty string`,
+        );
+      }
+      if (
+        typeof split.bps !== "number" ||
+        !Number.isInteger(split.bps) ||
+        split.bps <= 0
+      ) {
+        errors.push(
+          `x-faremeter-assets["${key}"].splits[${index}].bps must be a positive integer`,
+        );
+      } else {
+        totalBps += split.bps;
+      }
+    }
+    if (totalBps !== 10_000) {
+      errors.push(
+        `x-faremeter-assets["${key}"].splits bps must sum to 10000, got ${totalBps}`,
+      );
     }
   }
 
@@ -242,7 +300,10 @@ openapiRoutes.post(
         400,
       );
     }
-    const validationErrors = validateOpenApiSpec(body.spec);
+    const validationErrors = [
+      ...validateOpenApiSpec(body.spec),
+      ...validateFaremeterAssets(body.spec),
+    ];
     if (validationErrors.length > 0) {
       return c.json(
         {
@@ -407,6 +468,19 @@ openapiRoutes.get("/export", async (c) => {
     ...baseSpec,
     paths: { ...baseSpec.paths },
   };
+  const gatewaySpec = await buildTenantGatewaySpec(tenantId);
+  if (gatewaySpec) {
+    exportedSpec["x-faremeter-assets"] = gatewaySpec.spec["x-faremeter-assets"];
+    const gatewayPricing = gatewaySpec.spec["x-faremeter-pricing"];
+    if (isRecord(gatewayPricing)) {
+      exportedSpec["x-faremeter-pricing"] = {
+        ...(isRecord(exportedSpec["x-faremeter-pricing"])
+          ? exportedSpec["x-faremeter-pricing"]
+          : {}),
+        rates: gatewayPricing.rates,
+      };
+    }
+  }
 
   const warnings: string[] = [];
   const orphanEndpoints: { pattern: string; description: string | null }[] = [];
