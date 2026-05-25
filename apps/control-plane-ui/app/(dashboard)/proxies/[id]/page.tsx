@@ -13,6 +13,7 @@ import {
   ExternalLinkIcon,
   Cross2Icon,
   InfoCircledIcon,
+  Pencil1Icon,
 } from "@radix-ui/react-icons";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Tabs from "@radix-ui/react-tabs";
@@ -41,6 +42,7 @@ import { TokenPricesSection } from "@/components/shared/token-prices-section";
 import { InlineSchemeEdit } from "@/components/shared/inline-scheme-edit";
 import { InlineWalletSelect } from "@/components/shared/inline-wallet-select";
 import { EndpointsTab } from "@/components/proxy-endpoints/endpoints-tab";
+import { RootPricingRulesDialog } from "@/components/proxy-endpoints/root-pricing-rules-dialog";
 import { getProxyUrl } from "@/lib/format";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { GoLiveButton } from "@/components/shared/go-live-button";
@@ -92,6 +94,7 @@ export default function ProxyDetailPage() {
         : "overview";
   const [copied, setCopied] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [rootPricingOpen, setRootPricingOpen] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [isDeleting, setIsDeleting] = useState(false);
   const { toast } = useToast();
@@ -584,11 +587,22 @@ export default function ProxyDetailPage() {
                 <div>
                   <dt className="text-gray-11">Default Price</dt>
                   <dd className="mt-1">
-                    <InlinePriceEdit
-                      priceMicro={tenant.default_price}
-                      onUpdate={() => void mutateTenants()}
-                      apiEndpoint={apiEndpoint}
-                    />
+                    {tenant.default_scheme === "flex" ? (
+                      <button
+                        type="button"
+                        onClick={() => setRootPricingOpen(true)}
+                        className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+                      >
+                        Dynamic
+                        <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+                      </button>
+                    ) : (
+                      <InlinePriceEdit
+                        priceMicro={tenant.default_price}
+                        onUpdate={() => void mutateTenants()}
+                        apiEndpoint={apiEndpoint}
+                      />
+                    )}
                   </dd>
                 </div>
                 <div className="col-span-2">
@@ -604,6 +618,7 @@ export default function ProxyDetailPage() {
                       scheme={tenant.default_scheme}
                       onUpdate={() => void mutateTenants()}
                       apiEndpoint={apiEndpoint}
+                      onFullEditRequired={() => setRootPricingOpen(true)}
                     />
                   </dd>
                 </div>
@@ -628,6 +643,14 @@ export default function ProxyDetailPage() {
           </div>
         )}
       </div>
+
+      <RootPricingRulesDialog
+        open={rootPricingOpen}
+        onOpenChange={setRootPricingOpen}
+        tenantId={tenant.id}
+        defaultSchemeApiEndpoint={apiEndpoint}
+        onSaved={() => void mutateTenants()}
+      />
 
       <Dialog.Root
         open={deleteDialogOpen}
