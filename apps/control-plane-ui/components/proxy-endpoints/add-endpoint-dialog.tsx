@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Select from "@radix-ui/react-select";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import {
   Cross2Icon,
   PlusIcon,
@@ -12,10 +13,11 @@ import {
 } from "@radix-ui/react-icons";
 import { api } from "@/lib/api/client";
 import { useToast } from "@/components/ui/toast";
-import { SCHEME_OPTIONS } from "@/lib/types/api";
+import { DEFAULT_SCHEME, SCHEME_OPTIONS } from "@/lib/types/api";
 import { TagsInput } from "@/components/shared/tags-input";
 import { useAuth } from "@/lib/auth/context";
 import { refreshOnboardingStatus } from "@/lib/hooks/use-onboarding";
+import { PricingRulesForm, type PricingRule } from "./pricing-rules-form";
 
 interface AddEndpointDialogProps {
   open: boolean;
@@ -55,11 +57,20 @@ export function AddEndpointDialog({
   );
   const [tags, setTags] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
+  const [pricingRulesDirty, setPricingRulesDirty] = useState(false);
+  const [pricingRulesValid, setPricingRulesValid] = useState(true);
   const { toast } = useToast();
   const { currentOrg } = useAuth();
+  const effectiveScheme = scheme || defaultScheme || DEFAULT_SCHEME;
+  const dynamicPricingRulesActive = effectiveScheme === "flex";
+  const disabledPriceTooltip =
+    "Flex endpoints use dynamic pricing rules below, so this fixed fallback price is not used.";
 
   useEffect(() => {
     setSelectedPaths([]);
+    setPricingRulesDirty(false);
+    setPricingRulesValid(true);
 
     if (!pathPattern.trim()) {
       setValidation(null);
@@ -139,15 +150,36 @@ export function AddEndpointDialog({
 
     if (!pathPattern.trim()) return;
     if (!validation?.isValidRegex) return;
+    if (!pricingRulesValid) {
+      toast({
+        title: "Fix pricing rules before creating the endpoint",
+        variant: "error",
+      });
+      return;
+    }
+    if (dynamicPricingRulesActive && selectedPaths.length === 0) {
+      toast({
+        title: "Flex pricing requires an OpenAPI-backed endpoint",
+        variant: "error",
+      });
+      return;
+    }
 
     setSaving(true);
     try {
       await api.post(`/api/tenants/${tenantId}/endpoints`, {
         path: pathPattern.trim(),
-        price: price ? Math.round(parseFloat(price) * 1000000) : null,
+        price:
+          !dynamicPricingRulesActive && price
+            ? Math.round(parseFloat(price) * 1000000)
+            : null,
         scheme: scheme || null,
         description: description.trim() || null,
         openapi_source_paths: selectedPaths.length > 0 ? selectedPaths : null,
+        ...(effectiveScheme === "flex" &&
+          pricingRulesDirty &&
+          selectedPaths.length > 0 &&
+          pricingRules.length > 0 && { pricing_rules: pricingRules }),
         tags: tags.length > 0 ? tags : [],
       });
 
@@ -165,6 +197,9 @@ export function AddEndpointDialog({
       setScheme("");
       setDescription("");
       setTags([]);
+      setPricingRules([]);
+      setPricingRulesDirty(false);
+      setPricingRulesValid(true);
       setValidation(null);
       setSelectedPaths([]);
       onSuccess();
@@ -189,7 +224,7 @@ export function AddEndpointDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-gray-6 bg-gray-2 p-6 shadow-lg">
+        <Dialog.Content className="scrollbar-none fixed left-1/2 top-1/2 max-h-[90vh] w-[min(920px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-lg border border-gray-6 bg-gray-2 p-6 shadow-lg">
           <div className="flex items-center justify-between">
             <Dialog.Title className="text-lg font-semibold text-gray-12">
               Add Endpoint
@@ -259,52 +294,81 @@ export function AddEndpointDialog({
                 <label className="mb-1.5 block text-sm text-gray-11">
                   Price
                 </label>
-                <div className="flex items-center gap-0 rounded-md border border-gray-6 bg-gray-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const val = Math.max(0, parseFloat(price || "0") - 0.01);
-                      setPrice(val.toFixed(3));
-                    }}
-                    className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors rounded-l-md"
-                  >
-                    <MinusIcon className="h-4 w-4" />
-                  </button>
-                  <div className="flex flex-1 items-center">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={price}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "" || /^\d*\.?\d*$/.test(val)) {
-                          setPrice(val);
-                        }
-                      }}
-                      placeholder={(defaultPrice / 1_000_000).toFixed(3)}
-                      className="w-full bg-transparent py-2 text-center text-sm text-gray-12 placeholder-gray-9 focus:outline-none"
-                    />
-                    <span className="pr-2 text-xs text-gray-11">USD</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const val = parseFloat(price || "0") + 0.01;
-                      setPrice(val.toFixed(3));
-                    }}
-                    className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors rounded-r-md"
-                  >
-                    <PlusIcon className="h-4 w-4" />
-                  </button>
-                </div>
+                <Tooltip.Provider delayDuration={150}>
+                  <Tooltip.Root>
+                    <Tooltip.Trigger asChild>
+                      <div
+                        tabIndex={dynamicPricingRulesActive ? 0 : undefined}
+                        className="flex items-center gap-0 rounded-md border border-gray-6 bg-gray-3"
+                      >
+                        <button
+                          type="button"
+                          disabled={dynamicPricingRulesActive}
+                          onClick={() => {
+                            const val = Math.max(
+                              0,
+                              parseFloat(price || "0") - 0.01,
+                            );
+                            setPrice(val.toFixed(3));
+                          }}
+                          className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors rounded-l-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
+                        >
+                          <MinusIcon className="h-4 w-4" />
+                        </button>
+                        <div className="flex flex-1 items-center">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={price}
+                            disabled={dynamicPricingRulesActive}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                                setPrice(val);
+                              }
+                            }}
+                            placeholder={(defaultPrice / 1_000_000).toFixed(3)}
+                            className="w-full bg-transparent py-2 text-center text-sm text-gray-12 placeholder-gray-9 focus:outline-none disabled:cursor-not-allowed disabled:text-gray-9"
+                          />
+                          <span className="pr-2 text-xs text-gray-11">USD</span>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={dynamicPricingRulesActive}
+                          onClick={() => {
+                            const val = parseFloat(price || "0") + 0.01;
+                            setPrice(val.toFixed(3));
+                          }}
+                          className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors rounded-r-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
+                        >
+                          <PlusIcon className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </Tooltip.Trigger>
+                    {dynamicPricingRulesActive && (
+                      <Tooltip.Portal>
+                        <Tooltip.Content
+                          side="top"
+                          align="start"
+                          className="z-[70] max-w-xs rounded-md border border-gray-6 bg-gray-1 px-3 py-2 text-xs leading-5 text-gray-12 shadow-lg"
+                        >
+                          {disabledPriceTooltip}
+                          <Tooltip.Arrow className="fill-gray-1" />
+                        </Tooltip.Content>
+                      </Tooltip.Portal>
+                    )}
+                  </Tooltip.Root>
+                </Tooltip.Provider>
               </div>
               <div>
                 <label className="mb-1.5 block text-sm text-gray-11">
                   Scheme
                 </label>
                 <Select.Root
-                  value={scheme || defaultScheme}
-                  onValueChange={setScheme}
+                  value={effectiveScheme}
+                  onValueChange={(value) =>
+                    setScheme(value === defaultScheme ? "" : value)
+                  }
                 >
                   <Select.Trigger className="flex w-full h-9 items-center justify-between rounded-md border border-gray-6 bg-gray-3 px-3 text-sm text-gray-12 focus:border-accent-8 focus:outline-none focus:ring-1 focus:ring-accent-8">
                     <Select.Value />
@@ -338,6 +402,16 @@ export function AddEndpointDialog({
                 </Select.Root>
               </div>
             </div>
+
+            <PricingRulesForm
+              tenantId={tenantId}
+              scheme={effectiveScheme}
+              hasOpenApiLineage
+              onRulesChange={setPricingRules}
+              onDirtyChange={setPricingRulesDirty}
+              onValidChange={setPricingRulesValid}
+              showSaveButton={false}
+            />
 
             <div>
               <label className="block text-sm font-medium text-gray-11">
