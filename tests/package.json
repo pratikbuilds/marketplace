@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "local:check": "pnpm tsx src/local-stack-check.ts",
+    "local:flex-check": "pnpm tsx src/local-flex-check.ts",
     "local:publisher": "pnpm tsx src/local-publisher.ts",
     "test": "tap 'src/**/*.test.ts'",
     "test:prototype": "pnpm tsx src/gateway-nginx-prototype.test.ts"
@@ -18,13 +19,16 @@
   },
   "dependencies": {
     "@faremeter/fetch": "link:../../faremeter/packages/fetch",
+    "@faremeter/flex-solana": "catalog:",
     "@faremeter/gateway-nginx": "link:../../faremeter/packages/gateway-nginx",
     "@faremeter/info": "link:../../faremeter/packages/info",
     "@faremeter/logs": "link:../../faremeter/packages/logs",
     "@faremeter/middleware-openapi": "link:../../faremeter/packages/middleware-openapi",
+    "@faremeter/payment-solana": "link:../../faremeter/packages/payment-solana",
     "@faremeter/sidecar": "link:../../faremeter/apps/sidecar",
     "@faremeter/test-harness": "link:../../faremeter/packages/test-harness",
     "@faremeter/types": "link:../../faremeter/packages/types",
+    "@solana/kit": "catalog:",
     "@hono/node-server": "catalog:",
     "hono": "catalog:",
     "zx": "catalog:"

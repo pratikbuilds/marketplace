@@ -244,7 +244,6 @@ async function createFreeSmokeEndpoint(
       body: JSON.stringify({
         path: CHECK_ENDPOINT_PATH,
         price: 0,
-        scheme: "flex",
         description:
           "Local free check endpoint created through the control plane",
         priority: 10,

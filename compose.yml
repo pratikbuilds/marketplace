@@ -416,6 +416,40 @@ services:
     command: bash -lc 'pnpm local:check'
     restart: "no"
 
+  local-flex-check:
+    image: marketplace-node-dev
+    profiles: ["tools"]
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      discovery:
+        condition: service_healthy
+      api-node-a:
+        condition: service_healthy
+      seed-local-dev:
+        condition: service_completed_successfully
+    working_dir: /workspace/marketplace/tests
+    volumes:
+      - *marketplace-volume
+      - *faremeter-volume
+      - *marketplace-node-modules-volume
+      - *faremeter-node-modules-volume
+      - *pnpm-store-volume
+    environment:
+      LOCAL_CONTROL_PLANE_BASE_URL: http://control-plane:1337
+      LOCAL_DISCOVERY_BASE_URL: http://discovery:1339
+      LOCAL_FLEX_PROXY_URL: http://api-node-a/v1/local-check/flex-paid
+      LOCAL_FLEX_BACKEND_URL: http://publisher-mock:3001
+      LOCAL_ADMIN_EMAIL: admin@local.faremeter.test
+      LOCAL_ADMIN_PASSWORD: localdev123
+      LOCAL_FACILITATOR_SOLANA_KEYPAIR_PATH: /workspace/marketplace/keypairs/facilitator.json
+      LOCAL_FLEX_PAYER_KEYPAIR_PATH: /workspace/marketplace/keypairs/client-devnet.json
+      SOLANA_NETWORK: "${SOLANA_NETWORK:-devnet}"
+      SOLANA_RPC_URL: "${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+      LOCAL_FLEX_PRICE: "${LOCAL_FLEX_PRICE:-1000}"
+    command: bash -lc 'pnpm local:flex-check'
+    restart: "no"
+
 volumes:
   api-node-state:
   faremeter-node-modules:

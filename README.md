@@ -178,6 +178,7 @@ make local-down
 make local-logs
 make local-seed
 make local-check
+make local-flex-check
 ```
 
 `make local-check` verifies the seeded paid proxy route returns `402` with USDC
@@ -185,6 +186,12 @@ payment requirements for the selected Solana network through both local proxy
 nodes, creates a free endpoint through the control plane, routes that endpoint
 through both nodes, and verifies control-plane transaction and analytics
 records.
+
+`make local-flex-check` is an opt-in devnet smoke test for paid Flex. It creates
+a dedicated Flex proxy, configures a capture-only paid endpoint, creates a Flex
+escrow and session key from `LOCAL_FLEX_PAYER_KEYPAIR_PATH`, pays through the
+gateway, and verifies transaction recording. The payer keypair must hold devnet
+USDC before running the check.
 
 ## Generate Secrets
 

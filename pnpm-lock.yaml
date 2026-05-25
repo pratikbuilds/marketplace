@@ -9,6 +9,9 @@ catalogs:
     '@eslint/js':
       specifier: 9.34.0
       version: 9.34.0
+    '@faremeter/flex-solana':
+      specifier: 0.2.1
+      version: 0.2.1
     '@faremeter/gateway-nginx':
       specifier: 0.21.0
       version: 0.21.0
@@ -431,6 +434,9 @@ importers:
       arktype:
         specifier: 'catalog:'
         version: 2.2.0
+      bs58:
+        specifier: 'catalog:'
+        version: 6.0.0
       geist:
         specifier: ^1.5.1
         version: 1.7.0(next@15.5.15(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))
@@ -646,6 +652,9 @@ importers:
       '@faremeter/fetch':
         specifier: link:../../faremeter/packages/fetch
         version: link:../../faremeter/packages/fetch
+      '@faremeter/flex-solana':
+        specifier: 'catalog:'
+        version: 0.2.1(@logtape/logtape@1.0.4)(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@faremeter/gateway-nginx':
         specifier: link:../../faremeter/packages/gateway-nginx
         version: link:../../faremeter/packages/gateway-nginx
@@ -658,6 +667,9 @@ importers:
       '@faremeter/middleware-openapi':
         specifier: link:../../faremeter/packages/middleware-openapi
         version: link:../../faremeter/packages/middleware-openapi
+      '@faremeter/payment-solana':
+        specifier: link:../../faremeter/packages/payment-solana
+        version: link:../../faremeter/packages/payment-solana
       '@faremeter/sidecar':
         specifier: link:../../faremeter/apps/sidecar
         version: link:../../faremeter/apps/sidecar
@@ -670,6 +682,9 @@ importers:
       '@hono/node-server':
         specifier: 'catalog:'
         version: 1.19.1(hono@4.9.0)
+      '@solana/kit':
+        specifier: 'catalog:'
+        version: 6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
       hono:
         specifier: 'catalog:'
         version: 4.9.0
@@ -1133,12 +1148,23 @@ packages:
     resolution: {integrity: sha512-Z5kJ+wU3oA7MMIqVR9tyZRtjYPr4OC004Q4Rw7pgOKUOKkJfZ3O24nz3WYfGRpMDNmcOi3TwQOmgm7B7Tpii0w==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
 
+  '@faremeter/flex-solana@0.2.1':
+    resolution: {integrity: sha512-KW2i8O42Nv3P8etpdS7k/s44WpXmXXdFcJ1ifN0Kdhzp/OyV4SGx+uCMvbEu7WEdKtGFkf2Lax9IGY6mZ2FagA==}
+
   '@faremeter/gateway-nginx@0.21.0':
     resolution: {integrity: sha512-3fD9mvxiCrSr7HoACsMYvibIVT77DKNSk392mSlbgq3rYcwtqND2WgePeUuVOmoXm3Av9UBRVP0LSXAOIy+x4w==}
     hasBin: true
 
   '@faremeter/info@0.21.0':
     resolution: {integrity: sha512-ohZIarBE/yuDK5fO4ES1r7cYu0q9YiP5Axl/VDz/G3GPx+/bCo5Z4awiQAszhlUETnw/7T3OkQbuJXyHwc00Tg==}
+
+  '@faremeter/logs@0.17.1':
+    resolution: {integrity: sha512-URbANx1IisTw9pGHGswPKOnLAU0FUgnfMYwgMmjkLsqHqYebeAPOnVVGu3SDGgyNudNz0iiLnIfG6sXfZvM0YQ==}
+    peerDependencies:
+      '@logtape/logtape': 1.0.4
+    peerDependenciesMeta:
+      '@logtape/logtape':
+        optional: true
 
   '@faremeter/logs@0.21.0':
     resolution: {integrity: sha512-TWDi4IEDbhKYgHxBjPCxQjHbvoyAQxiMuMc4cfC+36y6DomI7qKd9ci/Kb59/xwug/ZMQV04quJ0xRRAqU2ixQ==}
@@ -8230,6 +8256,19 @@ snapshots:
       '@eslint/core': 0.15.2
       levn: 0.4.1
 
+  '@faremeter/flex-solana@0.2.1(@logtape/logtape@1.0.4)(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)':
+    dependencies:
+      '@faremeter/logs': 0.17.1(@logtape/logtape@1.0.4)
+      '@solana/kit': 6.7.0(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
+      '@solana/program-client-core': 6.7.0(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)
+      arktype: 2.2.0
+    transitivePeerDependencies:
+      - '@logtape/logtape'
+      - bufferutil
+      - fastestsmallesttextencoderdecoder
+      - typescript
+      - utf-8-validate
+
   '@faremeter/gateway-nginx@0.21.0(@logtape/logtape@1.0.4)(typescript@5.9.3)':
     dependencies:
       '@faremeter/logs': 0.21.0(@logtape/logtape@1.0.4)
@@ -8242,6 +8281,10 @@ snapshots:
     dependencies:
       '@faremeter/types': 0.21.0
       arktype: 2.2.0
+
+  '@faremeter/logs@0.17.1(@logtape/logtape@1.0.4)':
+    optionalDependencies:
+      '@logtape/logtape': 1.0.4
 
   '@faremeter/logs@0.21.0(@logtape/logtape@1.0.4)':
     optionalDependencies:

@@ -37,7 +37,7 @@ clean:
 
 include .env-checked
 
-.PHONY: all lint test local-up local-down local-logs local-seed local-check local-reinstall local-restart local-ps local
+.PHONY: all lint test local-up local-down local-logs local-seed local-check local-flex-check local-reinstall local-restart local-ps local
 local-up:
 	docker compose up --build -d
 
@@ -53,6 +53,9 @@ local-seed:
 local-check:
 	docker compose run --rm local-check
 
+local-flex-check:
+	docker compose run --rm local-flex-check
+
 local-reinstall:
 	docker compose run --rm workspace-init
 
@@ -63,5 +66,5 @@ local-ps:
 	docker compose ps
 
 local:
-	@printf '%s\n' 'Use one of: make local-up, make local-down, make local-logs, make local-seed, make local-check'
+	@printf '%s\n' 'Use one of: make local-up, make local-down, make local-logs, make local-seed, make local-check, make local-flex-check'
 FORCE:

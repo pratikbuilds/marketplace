@@ -9,6 +9,11 @@ app.get("/health", (c) => c.json({ status: "ok" }));
 
 app.post("/v1/chat/completions", async (c) => {
   const body: unknown = await c.req.json().catch((): unknown => ({}));
+  const usage = {
+    prompt_tokens: 11,
+    completion_tokens: 7,
+    total_tokens: 18,
+  };
 
   return c.json({
     id: "local-demo",
@@ -22,6 +27,7 @@ app.post("/v1/chat/completions", async (c) => {
         },
       },
     ],
+    usage,
     upstream: {
       received: body,
       host: c.req.header("host"),
@@ -32,11 +38,17 @@ app.post("/v1/chat/completions", async (c) => {
 
 app.post("/v1/local-check/:name", async (c) => {
   const body: unknown = await c.req.json().catch((): unknown => ({}));
+  const usage = {
+    prompt_tokens: 11,
+    completion_tokens: 7,
+    total_tokens: 18,
+  };
 
   return c.json({
     id: c.req.param("name"),
     object: "local.check",
     message: "Hello from a dynamically created marketplace endpoint.",
+    usage,
     upstream: {
       received: body,
       host: c.req.header("host"),
