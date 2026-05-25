@@ -4,7 +4,11 @@ import { sql } from "kysely";
 import safe from "safe-regex2";
 import { arktypeValidator } from "@hono/arktype-validator";
 import { parsePagination } from "../lib/validation.js";
-import { CreateEndpointSchema, UpdateEndpointSchema } from "../lib/schemas.js";
+import {
+  CreateEndpointSchema,
+  PricingRulesPayloadSchema,
+  UpdateEndpointSchema,
+} from "../lib/schemas.js";
 import { syncToNode } from "../lib/sync.js";
 import { syncOpenApiSpec } from "../lib/openapi-sync.js";
 import { logger } from "../logger.js";
@@ -13,6 +17,14 @@ import {
   createResourceLimiter,
   modifyResourceLimiter,
 } from "../middleware/rate-limit.js";
+import {
+  applyEndpointPricingRules,
+  getOpenApiOperation,
+  getOpenApiPathItem,
+  getOpenApiSpec,
+  getEffectiveOperationPricingRules,
+  methodCandidates,
+} from "../lib/pricing-rules.js";
 
 function processPathPattern(input: string): {
   path: string;
@@ -129,23 +141,49 @@ endpointsRoutes.post(
       return c.json({ error: processed.error }, 400);
     }
 
-    const result = await db
-      .insertInto("endpoints")
-      .values({
-        tenant_id: tenantId,
-        path: processed.path,
-        path_pattern: processed.path_pattern,
-        price: body.price ?? null,
-        scheme: body.scheme ?? null,
-        description: body.description ?? null,
-        priority: body.priority ?? 100,
-        http_method: body.http_method ?? "ANY",
-        is_active: true,
-        openapi_source_paths: body.openapi_source_paths ?? undefined,
-        tags: body.tags ?? [],
-      })
-      .returningAll()
-      .executeTakeFirstOrThrow();
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyEndpointPricingRules(
+          trx,
+          tenantId,
+          {
+            openapi_source_paths: body.openapi_source_paths ?? null,
+            http_method: body.http_method ?? "ANY",
+          },
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      const result = await trx
+        .insertInto("endpoints")
+        .values({
+          tenant_id: tenantId,
+          path: processed.path,
+          path_pattern: processed.path_pattern,
+          price: body.price ?? null,
+          scheme: body.scheme ?? null,
+          description: body.description ?? null,
+          priority: body.priority ?? 100,
+          http_method: body.http_method ?? "ANY",
+          is_active: true,
+          openapi_source_paths: body.openapi_source_paths ?? undefined,
+          tags: body.tags ?? [],
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return { ok: true as const, endpoint: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
+    }
+
+    const result = transactionResult.endpoint;
 
     void syncTenantNodes(tenantId);
     syncOpenApiSpec(tenantId).catch((err: unknown) =>
@@ -188,17 +226,63 @@ endpointsRoutes.put(
     if (body.is_active !== undefined) updateData.is_active = body.is_active;
     if (body.tags !== undefined) updateData.tags = body.tags;
 
-    const result = await db
-      .updateTable("endpoints")
-      .set(updateData)
-      .where("id", "=", id)
-      .where("tenant_id", "=", tenantId)
-      .returningAll()
-      .executeTakeFirst();
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      const endpoint = await trx
+        .selectFrom("endpoints")
+        .select(["id", "openapi_source_paths", "http_method"])
+        .where("id", "=", id)
+        .where("tenant_id", "=", tenantId)
+        .executeTakeFirst();
 
-    if (!result) {
-      return c.json({ error: "Endpoint not found" }, 404);
+      if (!endpoint) {
+        return {
+          ok: false as const,
+          error: "Endpoint not found",
+          status: 404 as const,
+        };
+      }
+
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyEndpointPricingRules(
+          trx,
+          tenantId,
+          {
+            openapi_source_paths:
+              body.openapi_source_paths ?? endpoint.openapi_source_paths,
+            http_method: body.http_method ?? endpoint.http_method,
+          },
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      const result = await trx
+        .updateTable("endpoints")
+        .set(updateData)
+        .where("id", "=", id)
+        .where("tenant_id", "=", tenantId)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!result) {
+        return {
+          ok: false as const,
+          error: "Endpoint not found",
+          status: 404 as const,
+        };
+      }
+
+      return { ok: true as const, endpoint: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
     }
+
+    const result = transactionResult.endpoint;
 
     void syncTenantNodes(tenantId);
     syncOpenApiSpec(tenantId).catch((err: unknown) =>
@@ -238,6 +322,111 @@ endpointsRoutes.delete("/:id", modifyResourceLimiter, async (c) => {
 
   return c.json({ deleted: true, endpoint: result });
 });
+
+endpointsRoutes.get("/:id/pricing-rules", async (c) => {
+  const tenantId = parseInt(c.req.param("tenantId") ?? "");
+  const id = parseInt(c.req.param("id"));
+
+  const endpoint = await db
+    .selectFrom("endpoints")
+    .select(["id", "openapi_source_paths", "http_method"])
+    .where("id", "=", id)
+    .where("tenant_id", "=", tenantId)
+    .where("is_active", "=", true)
+    .executeTakeFirst();
+
+  if (!endpoint) {
+    return c.json({ error: "Endpoint not found" }, 404);
+  }
+
+  const sourcePaths = endpoint.openapi_source_paths ?? [];
+  if (sourcePaths.length === 0) {
+    return c.json({
+      rules: [],
+      editable: false,
+      reason: "Pricing rules require an OpenAPI-backed endpoint",
+    });
+  }
+
+  const tenant = await db
+    .selectFrom("tenants")
+    .select("openapi_spec")
+    .where("id", "=", tenantId)
+    .executeTakeFirst();
+
+  const spec = getOpenApiSpec(tenant?.openapi_spec);
+  if (!spec) {
+    return c.json({
+      rules: [],
+      editable: false,
+      reason: "Tenant does not have an OpenAPI spec",
+    });
+  }
+
+  const methods = methodCandidates(endpoint.http_method);
+  for (const sourcePath of sourcePaths) {
+    const pathItem = getOpenApiPathItem(spec, sourcePath);
+    if (!pathItem) continue;
+    for (const method of methods) {
+      const operation = getOpenApiOperation(pathItem, method);
+      if (operation) {
+        return c.json({
+          rules:
+            getEffectiveOperationPricingRules(spec, sourcePath, method) ?? [],
+          editable: true,
+          source_paths: sourcePaths,
+          methods: methods.map((m) => m.toUpperCase()),
+        });
+      }
+    }
+  }
+
+  return c.json({
+    rules: [],
+    editable: false,
+    reason: "No OpenAPI operation found for this endpoint",
+  });
+});
+
+endpointsRoutes.put(
+  "/:id/pricing-rules",
+  modifyResourceLimiter,
+  arktypeValidator("json", PricingRulesPayloadSchema),
+  async (c) => {
+    const tenantId = parseInt(c.req.param("tenantId") ?? "");
+    const id = parseInt(c.req.param("id"));
+    const body = c.req.valid("json");
+
+    const endpoint = await db
+      .selectFrom("endpoints")
+      .select(["id", "openapi_source_paths", "http_method"])
+      .where("id", "=", id)
+      .where("tenant_id", "=", tenantId)
+      .where("is_active", "=", true)
+      .executeTakeFirst();
+
+    if (!endpoint) {
+      return c.json({ error: "Endpoint not found" }, 404);
+    }
+
+    const pricingResult = await applyEndpointPricingRules(
+      db,
+      tenantId,
+      endpoint,
+      body.rules,
+    );
+    if (!pricingResult.ok) {
+      return c.json({ error: pricingResult.error }, pricingResult.status);
+    }
+
+    void syncTenantNodes(tenantId);
+
+    return c.json({
+      rules: pricingResult.rules,
+      updated_operations: pricingResult.updatedOperations,
+    });
+  },
+);
 
 endpointsRoutes.get("/:id/stats", async (c) => {
   const tenantId = parseInt(c.req.param("tenantId") ?? "");

@@ -228,7 +228,7 @@ await t.test("POST /api/tenants", async (t) => {
     t.equal(data.name, "new-tenant");
     t.equal(data.backend_url, "http://new-backend.com");
     t.equal(data.default_price, 0);
-    t.equal(data.default_scheme, "exact");
+    t.equal(data.default_scheme, "flex");
   });
 
   await t.test("creates tenant with all fields", async (t) => {
@@ -540,6 +540,63 @@ await t.test("PUT /api/tenants/:id", async (t) => {
     t.equal(res.status, 200);
     const data = TenantResponse.assert(await res.json());
     t.equal(data.backend_url, "http://new-backend.com");
+  });
+});
+
+await t.test("tenant root pricing rules", async (t) => {
+  await t.test(
+    "member can update tenant-level Flex pricing rules",
+    async (t) => {
+      const { token, tenantId } = await createOrgMemberWithTenant("member");
+      const rules = [{ match: "$", capture: "10000" }];
+
+      const res = await app.request(`/api/tenants/${tenantId}/pricing-rules`, {
+        method: "PUT",
+        headers: {
+          Cookie: `auth_token=${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ rules }),
+      });
+
+      t.equal(res.status, 200);
+
+      const tenant = await db
+        .selectFrom("tenants")
+        .select("openapi_spec")
+        .where("id", "=", tenantId)
+        .executeTakeFirstOrThrow();
+      const spec = tenant.openapi_spec as Record<string, unknown>;
+      const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
+      t.same(pricing.rules, rules);
+    },
+  );
+
+  await t.test("reads tenant-level pricing rules", async (t) => {
+    const { token, tenantId } = await createOrgMemberWithTenant("member");
+    const rules = [{ match: "$", capture: "20000" }];
+
+    await db
+      .updateTable("tenants")
+      .set({
+        openapi_spec: JSON.stringify({
+          openapi: "3.0.3",
+          info: { title: "API", version: "1.0.0" },
+          "x-faremeter-pricing": { rules },
+          paths: {},
+        }),
+      })
+      .where("id", "=", tenantId)
+      .execute();
+
+    const res = await app.request(`/api/tenants/${tenantId}/pricing-rules`, {
+      headers: { Cookie: `auth_token=${token}` },
+    });
+
+    t.equal(res.status, 200);
+    const data = (await res.json()) as { rules: unknown[]; editable: boolean };
+    t.equal(data.editable, true);
+    t.same(data.rules, rules);
   });
 });
 

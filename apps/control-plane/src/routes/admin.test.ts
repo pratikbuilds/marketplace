@@ -1471,6 +1471,44 @@ await t.test("POST /api/admin/tenants", async (t) => {
     t.equal(res.status, 201);
     const data = TenantResponse.assert(await res.json());
     t.equal(data.name, "new-tenant");
+    const tenant = await db
+      .selectFrom("tenants")
+      .select("default_scheme")
+      .where("id", "=", data.id)
+      .executeTakeFirstOrThrow();
+    t.equal(tenant.default_scheme, "flex");
+  });
+
+  await t.test("persists root pricing rules on tenant creation", async (t) => {
+    const admin = await createUser("admin@example.com", true);
+    const org = await createOrg("Team", "team");
+    const rules = [{ match: "$", capture: "10000" }];
+
+    const res = await app.request("/api/admin/tenants", {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${admin.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "flex-root-tenant",
+        backend_url: "http://backend.example.com",
+        organization_id: org.id,
+        default_scheme: "flex",
+        pricing_rules: rules,
+      }),
+    });
+
+    t.equal(res.status, 201);
+    const data = TenantResponse.assert(await res.json());
+    const tenant = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", data.id)
+      .executeTakeFirstOrThrow();
+    const spec = tenant.openapi_spec as Record<string, unknown>;
+    const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
+    t.same(pricing.rules, rules);
   });
 
   await t.test("rejects invalid tenant name", async (t) => {
@@ -2989,6 +3027,76 @@ await t.test(
       t.equal(res.status, 200);
       const data = EndpointResponse.assert(await res.json());
       t.equal(data.price, 0.05);
+    });
+
+    await t.test("persists endpoint pricing rules", async (t) => {
+      const admin = await createUser("admin@example.com", true);
+      const org = await createOrg("Team", "team");
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: { summary: "Items" },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const rules = [
+        {
+          match: "$",
+          authorize: "1000000",
+          capture: "$.response.body.data.length * 10000",
+        },
+      ];
+
+      const res = await app.request(
+        `/api/admin/tenants/${tenant.id}/endpoints/${endpoint.id}`,
+        {
+          method: "PUT",
+          headers: {
+            Cookie: `auth_token=${admin.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            scheme: "flex",
+            pricing_rules: rules,
+          }),
+        },
+      );
+
+      t.equal(res.status, 200);
+
+      const updated = await db
+        .selectFrom("tenants")
+        .select("openapi_spec")
+        .where("id", "=", tenant.id)
+        .executeTakeFirstOrThrow();
+      const spec = updated.openapi_spec as {
+        paths: Record<string, Record<string, Record<string, unknown>>>;
+      };
+      const pricing = spec.paths["/v1/items"]?.post?.["x-faremeter-pricing"] as
+        | Record<string, unknown>
+        | undefined;
+      t.same(pricing?.rules, rules);
     });
 
     await t.test("returns 404 for non-existent endpoint", async (t) => {

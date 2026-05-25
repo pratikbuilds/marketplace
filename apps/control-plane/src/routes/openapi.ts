@@ -15,6 +15,7 @@ import {
   ValidatePatternSchema,
   OpenApiExtensionsSchema,
 } from "../lib/schemas.js";
+import { getOpenApiSpec, isRecord } from "../lib/pricing-rules.js";
 
 export const openapiRoutes = new Hono();
 
@@ -52,35 +53,24 @@ interface OperationObject {
   [key: string]: unknown;
 }
 
-function validateOpenApiSpec(spec: unknown): {
-  valid: boolean;
-  errors: string[];
-} {
+function validateOpenApiSpec(spec: Record<string, unknown>): string[] {
   const errors: string[] = [];
 
-  if (!spec || typeof spec !== "object") {
-    return { valid: false, errors: ["Spec must be a JSON object"] };
-  }
-
-  const s = spec as OpenApiSpec;
-
-  if (!s.openapi) {
-    errors.push("Missing 'openapi' field");
-  } else if (!s.openapi.startsWith("3.")) {
+  if (typeof spec.openapi !== "string" || !spec.openapi.startsWith("3.")) {
     errors.push("Only OpenAPI 3.x specs are supported");
   }
 
-  if (!s.paths || typeof s.paths !== "object") {
+  if (!isRecord(spec.paths)) {
     errors.push("Missing or invalid 'paths' object");
   } else {
-    for (const path of Object.keys(s.paths)) {
+    for (const path of Object.keys(spec.paths)) {
       if (!path.startsWith("/")) {
         errors.push(`Path '${path}' must start with '/'`);
       }
     }
   }
 
-  return { valid: errors.length === 0, errors };
+  return errors;
 }
 
 function openApiPathToRegex(path: string): string {
@@ -123,8 +113,12 @@ function extractPathsFromSpec(spec: OpenApiSpec): ExtractedPath[] {
       ] as const;
       for (const method of methods) {
         const op = item[method];
-        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty summary must fall through to description
-        if ((description = op?.summary || op?.description || null)) {
+        const operationText =
+          op?.summary !== undefined && op.summary !== ""
+            ? op.summary
+            : (op?.description ?? null);
+        if (operationText) {
+          description = operationText;
           break;
         }
       }
@@ -242,10 +236,19 @@ openapiRoutes.post(
     const tenantId = parseInt(c.req.param("tenantId") ?? "");
     const body = c.req.valid("json");
 
-    const validation = validateOpenApiSpec(body.spec);
-    if (!validation.valid) {
+    if (!isRecord(body.spec)) {
       return c.json(
-        { error: "Invalid OpenAPI spec", details: validation.errors },
+        { error: "Invalid OpenAPI spec", details: ["Spec must be an object"] },
+        400,
+      );
+    }
+    const validationErrors = validateOpenApiSpec(body.spec);
+    if (validationErrors.length > 0) {
+      return c.json(
+        {
+          error: "Invalid OpenAPI spec",
+          details: validationErrors,
+        },
         400,
       );
     }
@@ -255,6 +258,24 @@ openapiRoutes.post(
 
     if (paths.length === 0) {
       return c.json({ error: "No paths found in spec" }, 400);
+    }
+
+    const tenant = await db
+      .selectFrom("tenants")
+      .select(["openapi_spec"])
+      .where("id", "=", tenantId)
+      .executeTakeFirst();
+
+    if (!tenant) {
+      return c.json({ error: "Tenant not found" }, 404);
+    }
+
+    const existingRootPricing = getRootPricingExtension(tenant.openapi_spec);
+    if (
+      existingRootPricing !== null &&
+      getRootPricingExtension(spec) === null
+    ) {
+      spec["x-faremeter-pricing"] = existingRootPricing;
     }
 
     await db
@@ -527,3 +548,13 @@ openapiRoutes.post(
     });
   },
 );
+
+function getRootPricingExtension(
+  spec: unknown,
+): Record<string, unknown> | null {
+  const parsedSpec = getOpenApiSpec(spec);
+  if (!parsedSpec || !isRecord(parsedSpec["x-faremeter-pricing"])) {
+    return null;
+  }
+  return structuredClone(parsedSpec["x-faremeter-pricing"]);
+}
