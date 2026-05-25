@@ -19,7 +19,13 @@ import {
 } from "@radix-ui/react-icons";
 import useSWR from "swr";
 import { api } from "@/lib/api/client";
-import { SCHEME_OPTIONS, MIN_PRICE_USD, MAX_PRICE_USD } from "@/lib/types/api";
+import {
+  DEFAULT_SCHEME,
+  SCHEME_OPTIONS,
+  isScheme,
+  MIN_PRICE_USD,
+  MAX_PRICE_USD,
+} from "@/lib/types/api";
 import { useToast } from "@/components/ui/toast";
 import { TagsInput } from "@/components/shared/tags-input";
 import { sanitizeProxyName } from "@/lib/proxy-name";
@@ -32,6 +38,10 @@ import {
   composeFinalValue,
   maskToken,
 } from "@/lib/auth-header";
+import {
+  PricingRulesForm,
+  type PricingRule,
+} from "@/components/proxy-endpoints/pricing-rules-form";
 
 interface Node {
   id: number;
@@ -90,7 +100,10 @@ export function CreateTenantDialog({
   const [organizationId, setOrganizationId] = useState<string | null>(null); // null = not selected, "none" = no org, "123" = org id
   const [walletId, setWalletId] = useState<number | null>(null);
   const [defaultPrice, setDefaultPrice] = useState("0.01");
-  const [defaultScheme, setDefaultScheme] = useState("exact");
+  const [defaultScheme, setDefaultScheme] = useState(DEFAULT_SCHEME);
+  const [rootPricingRules, setRootPricingRules] = useState<PricingRule[]>([]);
+  const [rootPricingRulesDirty, setRootPricingRulesDirty] = useState(false);
+  const [rootPricingRulesValid, setRootPricingRulesValid] = useState(true);
   const [registerOnly, setRegisterOnly] = useState(false);
   const [tags, setTags] = useState<string[]>([]);
   const [error, setError] = useState("");
@@ -102,11 +115,20 @@ export function CreateTenantDialog({
   const checkTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const orgSelectionMade = organizationId !== null;
+  const isFlexScheme = defaultScheme === "flex";
+  const shouldPersistRootPricingRules =
+    isFlexScheme && rootPricingRules.length > 0;
   const isLegacyMode = organizationId === "none";
   const selectedOrg =
     organizationId && organizationId !== "none"
       ? organizations?.find((o) => o.id === parseInt(organizationId))
       : null;
+
+  const handleDefaultSchemeChange = (value: string) => {
+    if (isScheme(value)) {
+      setDefaultScheme(value);
+    }
+  };
 
   const getFinalAuthHeader = () => {
     if (!authToken.trim()) return null;
@@ -129,7 +151,8 @@ export function CreateTenantDialog({
       organizationId !== null ||
       walletId !== null ||
       defaultPrice !== "0.01" ||
-      defaultScheme !== "exact" ||
+      defaultScheme !== DEFAULT_SCHEME ||
+      rootPricingRulesDirty ||
       registerOnly ||
       tags.length > 0
     );
@@ -144,6 +167,7 @@ export function CreateTenantDialog({
     walletId,
     defaultPrice,
     defaultScheme,
+    rootPricingRulesDirty,
     registerOnly,
     tags,
   ]);
@@ -244,7 +268,10 @@ export function CreateTenantDialog({
     setOrganizationId(null);
     setWalletId(null);
     setDefaultPrice("0.01");
-    setDefaultScheme("exact");
+    setDefaultScheme(DEFAULT_SCHEME);
+    setRootPricingRules([]);
+    setRootPricingRulesDirty(false);
+    setRootPricingRulesValid(true);
     setRegisterOnly(false);
     setTags([]);
     setError("");
@@ -301,6 +328,10 @@ export function CreateTenantDialog({
         return;
       }
     }
+    if (isFlexScheme && !rootPricingRulesValid) {
+      setError("Fix pricing rules before creating the tenant");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -317,6 +348,9 @@ export function CreateTenantDialog({
         wallet_id: walletId,
         default_price: Math.round((parseFloat(defaultPrice) || 0) * 1_000_000),
         default_scheme: defaultScheme,
+        ...(shouldPersistRootPricingRules && {
+          pricing_rules: rootPricingRules,
+        }),
         register_only: registerOnly,
         tags: tags.length > 0 ? tags : undefined,
       });
@@ -907,6 +941,7 @@ export function CreateTenantDialog({
                   <div className="flex items-center gap-0 rounded-md border border-gray-6 bg-gray-2">
                     <button
                       type="button"
+                      disabled={isFlexScheme}
                       onClick={() => {
                         const val = Math.max(
                           0,
@@ -916,7 +951,7 @@ export function CreateTenantDialog({
                           val.toFixed(6).replace(/\.?0+$/, "") || "0",
                         );
                       }}
-                      className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-l-md"
+                      className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-l-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
                     >
                       <MinusIcon className="h-4 w-4" />
                     </button>
@@ -925,28 +960,37 @@ export function CreateTenantDialog({
                         type="text"
                         inputMode="decimal"
                         value={defaultPrice}
+                        disabled={isFlexScheme}
                         onChange={(e) => {
                           const val = e.target.value;
                           if (val === "" || /^\d*\.?\d*$/.test(val)) {
                             setDefaultPrice(val);
                           }
                         }}
-                        className="w-full bg-transparent py-2 text-center text-sm text-gray-12 focus:outline-none"
+                        className="w-full bg-transparent py-2 text-center text-sm text-gray-12 focus:outline-none disabled:cursor-not-allowed disabled:text-gray-9"
                       />
                       <span className="pr-2 text-xs text-gray-11">USD</span>
                     </div>
                     <button
                       type="button"
+                      disabled={isFlexScheme}
                       onClick={() => {
                         const val = parseFloat(defaultPrice || "0") + 0.01;
                         setDefaultPrice(val.toFixed(6).replace(/\.?0+$/, ""));
                       }}
-                      className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-r-md"
+                      className="flex h-9 w-9 items-center justify-center text-gray-11 hover:bg-gray-3 hover:text-gray-12 transition-colors rounded-r-md disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-gray-11"
                     >
                       <PlusIcon className="h-4 w-4" />
                     </button>
                   </div>
                   {(() => {
+                    if (isFlexScheme) {
+                      return (
+                        <p className="mt-1.5 text-xs text-gray-11">
+                          Flex tenants use the pricing rules below.
+                        </p>
+                      );
+                    }
                     const price = parseFloat(defaultPrice);
                     if (defaultPrice === "" || isNaN(price)) {
                       return null;
@@ -990,7 +1034,7 @@ export function CreateTenantDialog({
                   </label>
                   <select
                     value={defaultScheme}
-                    onChange={(e) => setDefaultScheme(e.target.value)}
+                    onChange={(e) => handleDefaultSchemeChange(e.target.value)}
                     className="w-full rounded-md border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:border-accent-8 focus:outline-none focus:ring-1 focus:ring-accent-8"
                   >
                     {SCHEME_OPTIONS.map((opt) => (
@@ -1001,6 +1045,19 @@ export function CreateTenantDialog({
                   </select>
                 </div>
               </div>
+              {isFlexScheme && (
+                <div className="mt-4">
+                  <PricingRulesForm
+                    tenantId={0}
+                    scheme={defaultScheme}
+                    hasOpenApiLineage
+                    onRulesChange={setRootPricingRules}
+                    onDirtyChange={setRootPricingRulesDirty}
+                    onValidChange={setRootPricingRulesValid}
+                    showSaveButton={false}
+                  />
+                </div>
+              )}
             </section>
 
             {/* Register Only Option */}
