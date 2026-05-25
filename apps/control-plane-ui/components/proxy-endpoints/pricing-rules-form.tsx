@@ -76,6 +76,7 @@ export function PricingRulesForm({
   const { toast } = useToast();
 
   const pricingRulesEnabled = scheme === undefined || scheme === "flex";
+  const customJsonActive = rules.some((rule) => rule.advancedRule);
   const validationError = useMemo(() => validateFriendlyRules(rules), [rules]);
   const generatedRules = useMemo(
     () => (validationError ? [] : buildRules(rules)),
@@ -657,41 +658,52 @@ export function PricingRulesForm({
               <div className="space-y-2.5 border-t border-gray-6 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs leading-5 text-gray-10">
-                    Edit the generated OpenAPI pricing JSON for formulas that do
-                    not fit the simple fields above.
+                    {customJsonActive
+                      ? "This rule is only editable in the raw JSON editor below."
+                      : "Edit the generated OpenAPI pricing JSON for formulas that do not fit the simple fields above."}
                   </p>
-                  <span className="shrink-0 rounded border border-gray-6 px-2 py-1 text-xs text-gray-10">
-                    Editable
+                  <span className="shrink-0 rounded border border-gray-6 bg-gray-3 px-2 py-1 text-xs text-gray-10">
+                    Raw JSON
                   </span>
                 </div>
-                <textarea
-                  value={technicalJson}
-                  onChange={(e) => {
-                    const nextJson = e.target.value;
-                    onDirtyChange?.(true);
-                    setTechnicalDirty(true);
-                    setTechnicalJson(nextJson);
-                    try {
-                      const parsedRules = parseRulesJson(nextJson);
-                      setRules(
-                        createFriendlyRulesFromPricingRules(parsedRules),
-                      );
-                      setTechnicalError(null);
-                      onRulesChange?.(parsedRules);
-                      onValidChange?.(true);
-                    } catch (err) {
-                      setTechnicalError(
-                        err instanceof Error
-                          ? err.message
-                          : "Technical JSON is invalid",
-                      );
-                      onValidChange?.(false);
-                    }
-                  }}
-                  spellCheck={false}
-                  aria-label="Editable technical pricing JSON"
-                  className="min-h-44 w-full resize-y rounded-md border border-gray-5 bg-gray-1 p-3 font-mono text-xs leading-5 text-gray-12 shadow-inner placeholder-gray-9 focus:border-accent-8 focus:outline-none focus:ring-1 focus:ring-accent-8"
-                />
+                <div className="overflow-hidden rounded-md border border-gray-5 bg-gray-1 shadow-inner transition-colors focus-within:border-gray-7 focus-within:ring-1 focus-within:ring-white/10">
+                  <div className="flex items-center justify-between border-b border-gray-6 bg-gray-3 px-3 py-1.5">
+                    <span className="text-xs font-medium text-gray-11">
+                      Raw editor
+                    </span>
+                    <span className="text-xs text-gray-10">
+                      {technicalJson.split("\n").length} lines
+                    </span>
+                  </div>
+                  <textarea
+                    value={technicalJson}
+                    onChange={(e) => {
+                      const nextJson = e.target.value;
+                      onDirtyChange?.(true);
+                      setTechnicalDirty(true);
+                      setTechnicalJson(nextJson);
+                      try {
+                        const parsedRules = parseRulesJson(nextJson);
+                        setRules(
+                          createFriendlyRulesFromPricingRules(parsedRules),
+                        );
+                        setTechnicalError(null);
+                        onRulesChange?.(parsedRules);
+                        onValidChange?.(true);
+                      } catch (err) {
+                        setTechnicalError(
+                          err instanceof Error
+                            ? err.message
+                            : "Technical JSON is invalid",
+                        );
+                        onValidChange?.(false);
+                      }
+                    }}
+                    spellCheck={false}
+                    aria-label="Editable technical pricing JSON"
+                    className="min-h-44 w-full resize-y bg-gray-1 p-3 font-mono text-xs leading-5 text-gray-12 placeholder-gray-9 selection:bg-accent-8/30 focus:outline-none"
+                  />
+                </div>
               </div>
             )}
           </div>

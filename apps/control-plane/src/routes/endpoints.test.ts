@@ -6,6 +6,7 @@ import { db, setupTestSchema, clearTestData } from "../db/instance.js";
 import { signToken } from "../middleware/auth.js";
 import { endpointsRoutes } from "./endpoints.js";
 import { OPENAPI_USPTO } from "../tests/fixtures/openapi-spec.js";
+import { isRecord } from "../lib/pricing-rules.js";
 
 const EndpointResponse = type({
   id: "number",
@@ -453,6 +454,75 @@ await t.test("POST /api/tenants/:tenantId/endpoints", async (t) => {
       | undefined;
     t.same(pricing?.rules, rules);
   });
+
+  await t.test(
+    "preserves imported pricing when endpoint create omits inline rules",
+    async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const importedRules = [
+        {
+          match: "$",
+          authorize: "1000000",
+          capture: "$.response.body.total * 10000",
+        },
+      ];
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: {
+                  summary: "Items",
+                  "x-faremeter-pricing": { rules: importedRules },
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      const res = await app.request(`/api/tenants/${tenant.id}/endpoints`, {
+        method: "POST",
+        headers: {
+          Cookie: `auth_token=${user.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path: "/v1/items",
+          scheme: "flex",
+          http_method: "POST",
+          openapi_source_paths: ["/v1/items"],
+        }),
+      });
+
+      t.equal(res.status, 201);
+
+      const updated = await db
+        .selectFrom("tenants")
+        .select("openapi_spec")
+        .where("id", "=", tenant.id)
+        .executeTakeFirstOrThrow();
+      const spec = OpenApiSpec.assert(updated.openapi_spec);
+      const itemsPath = spec.paths["/v1/items"];
+      if (!isRecord(itemsPath)) {
+        throw new Error("expected /v1/items path item");
+      }
+      const postOperation = itemsPath.post;
+      if (!isRecord(postOperation)) {
+        throw new Error("expected POST operation");
+      }
+      const pricing = postOperation["x-faremeter-pricing"];
+      t.same(pricing, { rules: importedRules });
+    },
+  );
 
   await t.test(
     "does not create endpoint when inline pricing rules are invalid",

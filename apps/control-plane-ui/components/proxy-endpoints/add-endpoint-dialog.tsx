@@ -58,7 +58,7 @@ export function AddEndpointDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [selectedPaths, setSelectedPaths] = useState<string[]>([]);
   const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
-  const [, setPricingRulesDirty] = useState(false);
+  const [pricingRulesDirty, setPricingRulesDirty] = useState(false);
   const [pricingRulesValid, setPricingRulesValid] = useState(true);
   const { toast } = useToast();
   const { currentOrg } = useAuth();
@@ -177,6 +177,7 @@ export function AddEndpointDialog({
         description: description.trim() || null,
         openapi_source_paths: selectedPaths.length > 0 ? selectedPaths : null,
         ...(effectiveScheme === "flex" &&
+          pricingRulesDirty &&
           selectedPaths.length > 0 &&
           pricingRules.length > 0 && { pricing_rules: pricingRules }),
         tags: tags.length > 0 ? tags : [],

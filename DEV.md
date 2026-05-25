@@ -57,6 +57,34 @@ make apps/database-stack
 make apps/vpc-stack
 ```
 
+### Fast Control Plane UI Iteration
+
+The local Docker stack serves the control plane UI on
+`http://localhost:11338` using a production `next build && next start` process.
+That is useful for full-stack smoke checks, but it does not pick up UI source
+changes until the Docker UI service rebuilds.
+
+For faster frontend iteration, keep the Docker backend running and stop only the
+Docker UI service:
+
+```
+docker compose stop control-plane-ui
+```
+
+Then run the local Next dev server on the same browser-facing port, pointed at
+the Docker control-plane API:
+
+```
+PORT=11338 \
+CONTROL_PLANE_API_URL=http://localhost:11337 \
+NEXT_PUBLIC_CONTROL_PLANE_API_URL=http://localhost:11337 \
+pnpm --dir apps/control-plane-ui dev
+```
+
+Open `http://localhost:11338` as usual. The URL stays the same, but changes in
+`apps/control-plane-ui` hot reload immediately because the page is served by
+local `next dev` while API calls still go to the Docker backend.
+
 ## Testing
 
 ### Running Unit Tests

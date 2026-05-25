@@ -176,9 +176,9 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
     name: "upfront-fixed-catch-all",
     path: `${FLEX_ENDPOINT_PREFIX}-upfront-fixed`,
     body: { model: DYNAMIC_MODEL },
-    rules: [{ match: "$", capture: "123" }],
-    expectedRequirementAmount: "123",
-    expectedCaptureAmount: 123,
+    rules: [{ match: "$", capture: "12300" }],
+    expectedRequirementAmount: "12300",
+    expectedCaptureAmount: 12_300,
   },
   {
     name: "upfront-request-field-equals",
@@ -187,11 +187,11 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
     rules: [
       {
         match: '$[?@.request.body.model == "gpt-4o"]',
-        capture: "$.request.body.quantity * 25",
+        capture: "$.request.body.quantity * 2500",
       },
     ],
-    expectedRequirementAmount: "100",
-    expectedCaptureAmount: 100,
+    expectedRequirementAmount: "10000",
+    expectedCaptureAmount: 10_000,
   },
   {
     name: "upfront-request-size-exists",
@@ -203,11 +203,11 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
     rules: [
       {
         match: "$[?@.request.body.metadata.tier]",
-        capture: "jsonSize($.request.body.payload) * 7",
+        capture: "jsonSize($.request.body.payload) * 700",
       },
     ],
-    expectedRequirementAmount: String(JSON.stringify("abcdef").length * 7),
-    expectedCaptureAmount: JSON.stringify("abcdef").length * 7,
+    expectedRequirementAmount: String(JSON.stringify("abcdef").length * 700),
+    expectedCaptureAmount: JSON.stringify("abcdef").length * 700,
   },
   {
     name: "after-response-regex",
@@ -221,20 +221,21 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
       {
         match: '$[?match(@.request.body.model, "claude-sonnet.*")]',
         authorize:
-          "(jsonSize($.request.body.messages) * 12 / 4 + coalesce($.request.body.max_tokens, 1024) * 60) * 125 / 100",
+          "(jsonSize($.request.body.messages) * 1200 / 4 + coalesce($.request.body.max_tokens, 1024) * 6000) * 125 / 100",
         capture:
-          "$.response.body.usage.prompt_tokens * 12 + $.response.body.usage.completion_tokens * 60",
+          "$.response.body.usage.prompt_tokens * 1200 + $.response.body.usage.completion_tokens * 6000",
       },
     ],
     expectedRequirementAmount: String(
       Math.ceil(
-        ((JSON.stringify(DYNAMIC_MESSAGES).length * 12) / 4 +
-          DYNAMIC_MAX_TOKENS * 60) *
+        ((JSON.stringify(DYNAMIC_MESSAGES).length * 1200) / 4 +
+          DYNAMIC_MAX_TOKENS * 6000) *
           1.25,
       ),
     ),
     expectedCaptureAmount:
-      RESPONSE_USAGE.promptTokens * 12 + RESPONSE_USAGE.completionTokens * 60,
+      RESPONSE_USAGE.promptTokens * 1200 +
+      RESPONSE_USAGE.completionTokens * 6000,
   },
   {
     name: "after-response-catch-all-coalesce",
@@ -248,7 +249,7 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
         match: "$",
         authorize:
           "(jsonSize($.request.body.messages) / 4 * 10 + coalesce($.request.body.max_tokens, 1024) * 40) * 120 / 100",
-        capture: "$.response.body.usage.total_tokens * 20",
+        capture: "$.response.body.usage.total_tokens * 2000",
       },
     ],
     expectedRequirementAmount: String(
@@ -256,7 +257,7 @@ const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
         ((JSON.stringify(DYNAMIC_MESSAGES).length / 4) * 10 + 1024 * 40) * 1.2,
       ),
     ),
-    expectedCaptureAmount: RESPONSE_USAGE.totalTokens * 20,
+    expectedCaptureAmount: RESPONSE_USAGE.totalTokens * 2000,
   },
 ];
 

@@ -50,6 +50,14 @@ export interface FriendlyRule {
   holdUsd: string;
 }
 
+type AmountConfig = {
+  mode: AmountMode;
+  amountUsd: string;
+  source: AmountFieldSource;
+  field: string;
+  fallback: string;
+};
+
 export const matchModes: { value: MatchMode; label: string }[] = [
   { value: "every-request", label: "every request" },
   { value: "request-field-equals", label: "request field equals" },
@@ -138,26 +146,12 @@ export function buildRule(rule: FriendlyRule): PricingRule {
     return rule.advancedRule;
   }
 
-  const capture = buildAmountExpression({
-    mode: rule.captureMode,
-    amountUsd: rule.amountUsd,
-    source: rule.captureSource,
-    field: rule.captureField,
-    fallback: rule.captureFallback,
-  });
-
   const built: PricingRule = {
     match: buildMatch(rule),
-    capture,
+    capture: buildAmountExpression(getCaptureAmountConfig(rule)),
   };
   if (rule.chargeTiming === "after-response") {
-    built.authorize = buildAmountExpression({
-      mode: rule.authorizeMode,
-      amountUsd: rule.holdUsd,
-      source: rule.authorizeSource,
-      field: rule.authorizeField,
-      fallback: rule.authorizeFallback,
-    });
+    built.authorize = buildAmountExpression(getAuthorizeAmountConfig(rule));
   }
   return built;
 }
@@ -187,10 +181,10 @@ export function parseRulesJson(value: string): PricingRule[] {
   }
 
   return parsed.map((entry, index) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    if (!isRecord(entry)) {
       throw new Error(`Rule ${index + 1} must be an object`);
     }
-    const raw = entry as Record<string, unknown>;
+    const raw = entry;
     if (typeof raw.match !== "string" || raw.match.trim() === "") {
       throw new Error(`Rule ${index + 1} requires match`);
     }
@@ -217,16 +211,16 @@ export function validateFriendlyRules(rules: FriendlyRule[]): string | null {
     if (rule.advancedRule) continue;
 
     const label = rules.length > 1 ? `Rule ${index + 1}: ` : "";
-    const chargeError = validateUSDInput(rule.amountUsd);
+    const chargeError = validateAmountConfig(getCaptureAmountConfig(rule));
     if (chargeError) {
       return `${label}${chargeError}`;
     }
 
     if (rule.chargeTiming === "after-response") {
-      if (rule.holdUsd.trim() === "") {
-        return `${label}Max upfront is required`;
-      }
-      const reserveError = validateUSDInput(rule.holdUsd);
+      const reserveError = validateAmountConfig(
+        getAuthorizeAmountConfig(rule),
+        "Max upfront is required",
+      );
       if (reserveError) {
         return `${label}${reserveError}`;
       }
@@ -236,13 +230,38 @@ export function validateFriendlyRules(rules: FriendlyRule[]): string | null {
   return null;
 }
 
-function parseAmountExpression(value: string | undefined): {
-  amountUsd: string;
-  mode: AmountMode;
-  source: AmountFieldSource;
-  field: string;
-  fallback: string;
-} | null {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function getCaptureAmountConfig(rule: FriendlyRule): AmountConfig {
+  return {
+    mode: rule.captureMode,
+    amountUsd: rule.amountUsd,
+    source: rule.captureSource,
+    field: rule.captureField,
+    fallback: rule.captureFallback,
+  };
+}
+
+function getAuthorizeAmountConfig(rule: FriendlyRule): AmountConfig {
+  return {
+    mode: rule.authorizeMode,
+    amountUsd: rule.holdUsd,
+    source: rule.authorizeSource,
+    field: rule.authorizeField,
+    fallback: rule.authorizeFallback,
+  };
+}
+
+function validateAmountConfig(
+  config: AmountConfig,
+  emptyMessage = "Enter a pricing amount",
+): string | null {
+  return validateUSDInput(config.amountUsd, emptyMessage);
+}
+
+function parseAmountExpression(value: string | undefined): AmountConfig | null {
   if (!value) {
     return null;
   }
@@ -263,7 +282,12 @@ function parseAmountExpression(value: string | undefined): {
     return null;
   }
 
-  const ref = parseReference(match[1]?.trim() ?? "");
+  const parsedValueRef = parseAmountValueRef(match[1]?.trim() ?? "");
+  if (!parsedValueRef) {
+    return null;
+  }
+
+  const ref = parseReference(parsedValueRef.ref);
   if (!ref) {
     return null;
   }
@@ -272,21 +296,54 @@ function parseAmountExpression(value: string | undefined): {
   }
   return {
     amountUsd: formatUsd(parseInt(match[2] ?? "0", 10)),
-    mode: ref.source === "request-body" ? "request-field" : "response-field",
+    mode: parsedValueRef.usesSize
+      ? "request-size"
+      : ref.source === "request-body"
+        ? "request-field"
+        : "response-field",
     source: ref.source,
     field: ref.field,
-    fallback: "",
+    fallback: parsedValueRef.fallback,
   };
+}
+
+function parseAmountValueRef(value: string): {
+  ref: string;
+  fallback: string;
+  usesSize: boolean;
+} | null {
+  const sizeMatch = /^jsonSize\((.+)\)$/.exec(value);
+  if (sizeMatch?.[1]) {
+    const parsed = parseAmountValueRef(sizeMatch[1].trim());
+    if (!parsed) {
+      return null;
+    }
+    return { ...parsed, usesSize: true };
+  }
+
+  const coalesceMatch = /^coalesce\((.+),\s*(.+)\)$/.exec(value);
+  if (coalesceMatch?.[1] && coalesceMatch[2]) {
+    return {
+      ref: coalesceMatch[1].trim(),
+      fallback: coalesceMatch[2].trim(),
+      usesSize: false,
+    };
+  }
+
+  return { ref: value, fallback: "", usesSize: false };
 }
 
 function formatUsd(micro: number): string {
   return (micro / 1_000_000).toFixed(6).replace(/\.?0+$/, "");
 }
 
-function validateUSDInput(value: string): string | null {
+function validateUSDInput(
+  value: string,
+  emptyMessage = "Enter a pricing amount",
+): string | null {
   const trimmed = value.trim();
   if (trimmed === "") {
-    return "Enter a pricing amount";
+    return emptyMessage;
   }
   if (!/^\d*\.?\d+$/.test(trimmed)) {
     return "Pricing amounts must be numeric";
@@ -466,24 +523,18 @@ function buildMatch(rule: FriendlyRule): string {
   return `$[?${ref} == ${jsonPathString(rule.matchValue)}]`;
 }
 
-function buildAmountExpression(args: {
-  mode: AmountMode;
-  amountUsd: string;
-  source: AmountFieldSource;
-  field: string;
-  fallback: string;
-}): string {
-  const amount = usdToAtomic(args.amountUsd);
-  if (args.mode === "fixed") {
+function buildAmountExpression(config: AmountConfig): string {
+  const amount = usdToAtomic(config.amountUsd);
+  if (config.mode === "fixed") {
     return `${amount}`;
   }
 
-  const ref = fieldRef(args.source, args.field);
+  const ref = fieldRef(config.source, config.field);
   const valueRef =
-    args.fallback.trim() === ""
+    config.fallback.trim() === ""
       ? ref
-      : `coalesce(${ref}, ${args.fallback.trim()})`;
-  if (args.mode === "request-size") {
+      : `coalesce(${ref}, ${config.fallback.trim()})`;
+  if (config.mode === "request-size") {
     return `jsonSize(${valueRef}) * ${amount}`;
   }
   return `${valueRef} * ${amount}`;
