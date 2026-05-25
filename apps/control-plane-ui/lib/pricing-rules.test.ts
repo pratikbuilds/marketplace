@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  buildAIPricingRulesPrompt,
   buildRule,
   createFriendlyRule,
   parseRulesJson,
@@ -113,5 +114,20 @@ assert.throws(
   assert.equal(
     validateFriendlyRules([{ ...rule, holdUsd: "" }]),
     "Max upfront is required",
+  );
+}
+
+{
+  const currentRules = '[{"match":"$","capture":"10000"}]';
+  const prompt = buildAIPricingRulesPrompt(currentRules);
+
+  assert.match(prompt, /return only the final JSON/);
+  assert.match(prompt, /Do not wrap the JSON in Markdown/);
+  assert.match(prompt, /The final output must be a JSON array/);
+  assert.match(prompt, /Do not use response fields in "match"/);
+  assert.match(prompt, /Do not use response fields in "authorize"/);
+  assert.match(
+    prompt,
+    /Current rules in my editor:\n\[\{"match":"\$","capture":"10000"\}\]/,
   );
 }

@@ -206,6 +206,56 @@ export function parseRulesJson(value: string): PricingRule[] {
   });
 }
 
+export function buildAIPricingRulesPrompt(currentRulesJson: string): string {
+  return `You are helping me create custom Faremeter Flex pricing rules.
+
+Your job is to help me turn a pricing idea into valid JSON rules that I can paste into a pricing editor.
+
+First, ask me any clarifying questions you need about the pricing behavior. Once you have enough information, return only the final JSON. Do not wrap the JSON in Markdown. Do not include explanations with the final JSON.
+
+The final output must be a JSON array. Each rule must be an object with:
+- "match": a required JSONPath string
+- "capture": a required pricing expression string
+- "authorize": an optional pricing expression string
+
+How the rules work:
+- Rules are checked from top to bottom.
+- The first rule whose "match" expression matches the request wins.
+- Use "$" to match every request.
+- "match" can only use request data, such as request body, headers, query, or path.
+- Do not use response fields in "match".
+- "capture" is always required.
+- If pricing depends on the upstream response, include "authorize" for the upfront maximum and use "capture" for the final amount.
+- Do not use response fields in "authorize".
+- If there is no "authorize", "capture" must only use request data.
+- Pricing expressions can use +, -, *, /, parentheses, jsonSize(ref), and coalesce(ref, default).
+
+Useful patterns:
+- Match every request:
+  { "match": "$", "capture": "10000" }
+
+- Match a request body field:
+  { "match": "$[?@.request.body.model == \\"gpt-4o\\"]", "capture": "10000" }
+
+- Match a model family with regex:
+  { "match": "$[?match(@.request.body.model, \\"claude-sonnet.*\\")]", "capture": "10000" }
+
+- Charge from a request field:
+  { "match": "$", "capture": "$.request.body.quantity * 1000" }
+
+- Charge from response usage with an upfront maximum:
+  {
+    "match": "$",
+    "authorize": "coalesce($.request.body.max_tokens, 1000) * 30",
+    "capture": "$.response.body.usage.total_tokens * 30"
+  }
+
+Current rules in my editor:
+${currentRulesJson.trim()}
+
+Help me design the pricing behavior, then produce the final JSON array.`;
+}
+
 export function validateFriendlyRules(rules: FriendlyRule[]): string | null {
   for (const [index, rule] of rules.entries()) {
     if (rule.advancedRule) continue;

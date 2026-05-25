@@ -7,12 +7,14 @@ import {
   ChevronDownIcon,
   CaretDownIcon,
   CaretRightIcon,
+  CopyIcon,
   PlusIcon,
   TrashIcon,
 } from "@radix-ui/react-icons";
 import { api, ApiError } from "@/lib/api/client";
 import { useToast } from "@/components/ui/toast";
 import {
+  buildAIPricingRulesPrompt,
   buildRule,
   buildRules,
   buildRulesSummary,
@@ -76,7 +78,6 @@ export function PricingRulesForm({
   const { toast } = useToast();
 
   const pricingRulesEnabled = scheme === undefined || scheme === "flex";
-  const customJsonActive = rules.some((rule) => rule.advancedRule);
   const validationError = useMemo(() => validateFriendlyRules(rules), [rules]);
   const generatedRules = useMemo(
     () => (validationError ? [] : buildRules(rules)),
@@ -261,6 +262,17 @@ export function PricingRulesForm({
       toast({ title: message, variant: "error" });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function copyAIPrompt() {
+    try {
+      await navigator.clipboard.writeText(
+        buildAIPricingRulesPrompt(technicalJson),
+      );
+      toast({ title: "AI prompt copied", variant: "success" });
+    } catch {
+      toast({ title: "Failed to copy AI prompt", variant: "error" });
     }
   }
 
@@ -656,15 +668,24 @@ export function PricingRulesForm({
             </button>
             {technicalOpen && (
               <div className="space-y-2.5 border-t border-gray-6 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs leading-5 text-gray-10">
-                    {customJsonActive
-                      ? "This rule is only editable in the raw JSON editor below."
-                      : "Edit the generated OpenAPI pricing JSON for formulas that do not fit the simple fields above."}
-                  </p>
-                  <span className="shrink-0 rounded border border-gray-6 bg-gray-3 px-2 py-1 text-xs text-gray-10">
-                    Raw JSON
-                  </span>
+                <div className="flex flex-col gap-3 rounded-md border border-gray-6 bg-gray-3 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-gray-12">
+                      AI rule helper
+                    </p>
+                    <p className="mt-0.5 text-xs leading-5 text-gray-10">
+                      Copy a prompt for Claude or Codex, then paste the
+                      generated pricing JSON into the raw editor.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void copyAIPrompt()}
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md border border-gray-7 bg-gray-2 px-2.5 text-xs font-medium text-gray-12 hover:bg-gray-4"
+                  >
+                    <CopyIcon className="h-3.5 w-3.5" />
+                    Copy AI prompt
+                  </button>
                 </div>
                 <div className="overflow-hidden rounded-md border border-gray-5 bg-gray-1 shadow-inner transition-colors focus-within:border-gray-7 focus-within:ring-1 focus-within:ring-white/10">
                   <div className="flex items-center justify-between border-b border-gray-6 bg-gray-3 px-3 py-1.5">
