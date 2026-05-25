@@ -32,9 +32,15 @@ import {
 } from "../lib/faremeter-dash.js";
 import { validateProxyName } from "../lib/proxy-name.js";
 import { parsePagination } from "../lib/validation.js";
+import {
+  applyEndpointPricingRules,
+  createOpenApiSpecWithRootPricingRules,
+  validateSpecPricingRules,
+} from "../lib/pricing-rules.js";
 import { arktypeValidator } from "@hono/arktype-validator";
 import {
   AdminCreateTenantSchema,
+  DEFAULT_TENANT_SCHEME,
   AdminUpdateTenantSchema,
   AdminUpdateEndpointSchema,
   AdminUpdateUserSchema,
@@ -760,6 +766,20 @@ adminRoutes.post(
       orgSlug = org.slug;
     }
 
+    const rootPricingSpec =
+      body.pricing_rules !== undefined
+        ? createOpenApiSpecWithRootPricingRules(
+            sanitizedName,
+            body.pricing_rules,
+          )
+        : null;
+    if (rootPricingSpec) {
+      const validationError = validateSpecPricingRules(rootPricingSpec);
+      if (validationError) {
+        return c.json({ error: validationError }, 400);
+      }
+    }
+
     const tenant = await db.transaction().execute(async (trx) => {
       const t = await trx
         .insertInto("tenants")
@@ -769,10 +789,13 @@ adminRoutes.post(
           organization_id: body.organization_id ?? null,
           wallet_id: walletId ?? null,
           default_price: body.default_price ?? 0,
-          default_scheme: body.default_scheme ?? "exact",
+          default_scheme: body.default_scheme ?? DEFAULT_TENANT_SCHEME,
           upstream_auth_header: body.upstream_auth_header ?? null,
           upstream_auth_value: body.upstream_auth_value ?? null,
           org_slug: orgSlug,
+          ...(rootPricingSpec !== null && {
+            openapi_spec: JSON.stringify(rootPricingSpec),
+          }),
           is_active: !isRegisterOnly,
           status: isRegisterOnly ? "registered" : "pending",
           tags: body.tags ?? [],
@@ -1622,17 +1645,59 @@ adminRoutes.put(
       updateData.http_method = body.http_method;
     if (body.tags !== undefined) updateData.tags = body.tags;
 
-    const result = await db
-      .updateTable("endpoints")
-      .set(updateData)
-      .where("id", "=", endpointId)
-      .where("tenant_id", "=", tenantId)
-      .returningAll()
-      .executeTakeFirst();
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      const endpoint = await trx
+        .selectFrom("endpoints")
+        .select(["id", "openapi_source_paths", "http_method"])
+        .where("id", "=", endpointId)
+        .where("tenant_id", "=", tenantId)
+        .executeTakeFirst();
 
-    if (!result) {
-      return c.json({ error: "Endpoint not found" }, 404);
+      if (!endpoint) {
+        return {
+          ok: false as const,
+          error: "Endpoint not found",
+          status: 404 as const,
+        };
+      }
+
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyEndpointPricingRules(
+          trx,
+          tenantId,
+          endpoint,
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      const result = await trx
+        .updateTable("endpoints")
+        .set(updateData)
+        .where("id", "=", endpointId)
+        .where("tenant_id", "=", tenantId)
+        .returningAll()
+        .executeTakeFirst();
+
+      if (!result) {
+        return {
+          ok: false as const,
+          error: "Endpoint not found",
+          status: 404 as const,
+        };
+      }
+
+      return { ok: true as const, endpoint: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
     }
+
+    const result = transactionResult.endpoint;
 
     const tenantNodes = await db
       .selectFrom("tenant_nodes")

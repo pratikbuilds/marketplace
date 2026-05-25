@@ -14,8 +14,11 @@ import { enqueueCertProvisioning } from "../lib/queue.js";
 import { validateProxyName } from "../lib/proxy-name.js";
 import { requireAdmin, requireTenantAccess } from "../middleware/auth.js";
 import { arktypeValidator } from "@hono/arktype-validator";
+import type { PricingRule } from "@faremeter/middleware-openapi";
 import {
   CreateTenantSchema,
+  DEFAULT_TENANT_SCHEME,
+  PricingRulesPayloadSchema,
   UpdateTenantSchema,
   AssignNodeSchema,
 } from "../lib/schemas.js";
@@ -23,6 +26,13 @@ import {
   seedTokenPricesForTenant,
   getUsdPeggedSymbols,
 } from "../lib/token-seed.js";
+import {
+  createOpenApiSpec,
+  getOpenApiSpec,
+  getPricingRulesFromObject,
+  setPricingRules,
+  validateSpecPricingRules,
+} from "../lib/pricing-rules.js";
 
 export const tenantsRoutes = new Hono();
 
@@ -91,7 +101,7 @@ tenantsRoutes.post(
           organization_id: body.organization_id ?? null,
           wallet_id: body.wallet_id ?? null,
           default_price: body.default_price ?? 0,
-          default_scheme: body.default_scheme ?? "exact",
+          default_scheme: body.default_scheme ?? DEFAULT_TENANT_SCHEME,
           upstream_auth_header: body.upstream_auth_header ?? null,
           upstream_auth_value: body.upstream_auth_value ?? null,
           is_active: isRegisterOnly ? false : (body.is_active ?? true),
@@ -212,6 +222,72 @@ tenantsRoutes.put(
     }
 
     return c.json(result);
+  },
+);
+
+tenantsRoutes.get("/:id/pricing-rules", async (c) => {
+  const id = parseInt(c.req.param("id"));
+
+  const tenant = await db
+    .selectFrom("tenants")
+    .select(["id", "openapi_spec"])
+    .where("id", "=", id)
+    .executeTakeFirst();
+
+  if (!tenant) {
+    return c.json({ error: "Tenant not found" }, 404);
+  }
+
+  const spec = getOpenApiSpec(tenant.openapi_spec);
+  return c.json({
+    rules: spec ? (getPricingRulesFromObject(spec) ?? []) : [],
+    editable: true,
+  });
+});
+
+tenantsRoutes.put(
+  "/:id/pricing-rules",
+  arktypeValidator("json", PricingRulesPayloadSchema),
+  async (c) => {
+    const id = parseInt(c.req.param("id"));
+    const body = c.req.valid("json");
+
+    const tenant = await db
+      .selectFrom("tenants")
+      .select(["id", "name", "openapi_spec"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+
+    if (!tenant) {
+      return c.json({ error: "Tenant not found" }, 404);
+    }
+
+    const spec =
+      getOpenApiSpec(tenant.openapi_spec) ?? createOpenApiSpec(tenant.name);
+    setPricingRules(spec, body.rules as PricingRule[]);
+
+    const validationError = validateSpecPricingRules(spec);
+    if (validationError) {
+      return c.json({ error: validationError }, 400);
+    }
+
+    await db
+      .updateTable("tenants")
+      .set({ openapi_spec: JSON.stringify(spec) })
+      .where("id", "=", id)
+      .execute();
+
+    const assignedNodes = await db
+      .selectFrom("tenant_nodes")
+      .select(["node_id"])
+      .where("tenant_id", "=", id)
+      .execute();
+
+    for (const { node_id } of assignedNodes) {
+      syncToNode(node_id).catch((err: unknown) => logger.error(String(err)));
+    }
+
+    return c.json({ rules: body.rules });
   },
 );
 
