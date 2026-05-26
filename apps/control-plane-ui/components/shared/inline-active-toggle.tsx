@@ -28,8 +28,7 @@ export function InlineActiveToggle({
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
 
-  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- disabled=false must not override isSaving=true
-  const isDisabled = disabled || isSaving;
+  const isDisabled = disabled === true || isSaving;
 
   const handleToggle = async () => {
     setIsSaving(true);

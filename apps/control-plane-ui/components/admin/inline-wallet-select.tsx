@@ -55,7 +55,10 @@ export function InlineWalletSelect({
     api.get<Wallet[]>,
   );
 
-  const availableWallets = [...(masterWallets ?? []), ...(orgWallets ?? [])];
+  const availableWallets = useMemo(
+    () => [...(masterWallets ?? []), ...(orgWallets ?? [])],
+    [masterWallets, orgWallets],
+  );
 
   useEffect(() => {
     if (isOpen) {

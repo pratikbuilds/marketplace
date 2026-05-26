@@ -88,12 +88,14 @@ export function AdminTransactionsTable({
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const offset = page * pageSize;
 
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- SWR fetcher type inference limitation
-  const { data, isLoading, error } = useSWR<TransactionsResponse>(
+  const transactions = useSWR<TransactionsResponse, Error>(
     `/api/admin/tenants/${tenantId}/transactions?limit=${pageSize}&offset=${offset}`,
     (url: string) => api.get<TransactionsResponse>(url),
     { refreshInterval: 30000 },
   );
+  const data = transactions.data;
+  const isLoading = transactions.isLoading;
+  const error = transactions.error;
 
   const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
   const hasNextPage = page < totalPages - 1;

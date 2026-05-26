@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import {
   Cross2Icon,
@@ -29,7 +29,7 @@ export function TokenPricesSection({
   const [initialLoaded, setInitialLoaded] = useState(false);
   const { toast } = useToast();
 
-  const fetchPrices = async () => {
+  const fetchPrices = useCallback(async () => {
     setLoading(true);
     try {
       const query = endpointId ? `?endpoint_id=${endpointId}` : "";
@@ -43,7 +43,7 @@ export function TokenPricesSection({
       setLoading(false);
       setInitialLoaded(true);
     }
-  };
+  }, [endpointId, tenantId]);
 
   const { data: supportedTokensData } = useSWR<{
     data: SupportedToken[];
@@ -55,13 +55,13 @@ export function TokenPricesSection({
     if (!initialLoaded) {
       void fetchPrices();
     }
-  }, [tenantId, endpointId]);
+  }, [fetchPrices, initialLoaded]);
 
   useEffect(() => {
     if (expanded && initialLoaded) {
       void fetchPrices();
     }
-  }, [expanded, tenantId, endpointId]);
+  }, [expanded, fetchPrices, initialLoaded]);
 
   const handleUpdateAmount = async (tp: TokenPrice, newAmount: string) => {
     const microAmount = Math.round(parseFloat(newAmount) * 1_000_000);

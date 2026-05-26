@@ -78,16 +78,13 @@ export default function AdminTenantsPage() {
   const [search, setSearch] = useState("");
   const { toast } = useToast();
 
-  /* eslint-disable @typescript-eslint/prefer-nullish-coalescing -- boolean OR chain; ?? would short-circuit on false and skip backend_url/tags matching */
+  const searchLower = search.toLowerCase();
   const filteredTenants =
-    tenants?.filter(
-      (t) =>
-        t.name.toLowerCase().includes(search.toLowerCase()) ||
-        t.organization_name?.toLowerCase().includes(search.toLowerCase()) ||
-        t.backend_url.toLowerCase().includes(search.toLowerCase()) ||
-        t.tags?.some((tag) => tag.toLowerCase().includes(search.toLowerCase())),
+    tenants?.filter((t) =>
+      [t.name, t.organization_name, t.backend_url, ...(t.tags ?? [])].some(
+        (value) => value?.toLowerCase().includes(searchLower),
+      ),
     ) ?? [];
-  /* eslint-enable @typescript-eslint/prefer-nullish-coalescing */
   const totalCount = filteredTenants.length;
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const offset = page * PAGE_SIZE;

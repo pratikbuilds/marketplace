@@ -46,29 +46,30 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [currentOrg, setCurrentOrgState] = useState<Organization | null>(null);
 
-  /* eslint-disable @typescript-eslint/no-unsafe-assignment -- SWR fetcher type inference limitation */
-  const {
-    data: user,
-    error,
-    isLoading,
-    mutate,
-  } = useSWR<User>("/api/auth/me", (url: string) => api.get<User>(url), {
-    revalidateOnFocus: false,
-    shouldRetryOnError: false,
-    onSuccess: (data) => {
-      if (data?.organizations?.length && !currentOrg) {
-        const savedOrgId = localStorage.getItem("currentOrgId");
-        const savedOrg = savedOrgId
-          ? data.organizations.find((o) => o.id === parseInt(savedOrgId))
-          : null;
-        setCurrentOrgState(savedOrg ?? data.organizations[0]);
-      }
+  const auth = useSWR<User, Error>(
+    "/api/auth/me",
+    (url: string) => api.get<User>(url),
+    {
+      revalidateOnFocus: false,
+      shouldRetryOnError: false,
+      onSuccess: (data) => {
+        if (data?.organizations?.length && !currentOrg) {
+          const savedOrgId = localStorage.getItem("currentOrgId");
+          const savedOrg = savedOrgId
+            ? data.organizations.find((o) => o.id === parseInt(savedOrgId))
+            : null;
+          setCurrentOrgState(savedOrg ?? data.organizations[0]);
+        }
+      },
+      onError: () => {
+        setCurrentOrgState(null);
+      },
     },
-    onError: () => {
-      setCurrentOrgState(null);
-    },
-  });
-  /* eslint-enable @typescript-eslint/no-unsafe-assignment */
+  );
+  const user = auth.data;
+  const error = auth.error;
+  const isLoading = auth.isLoading;
+  const mutate = auth.mutate;
 
   const setCurrentOrg = useCallback((org: Organization | null) => {
     setCurrentOrgState(org);
