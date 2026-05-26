@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { db } from "../db/instance.js";
-import { syncToNode } from "../lib/sync.js";
+import { syncTenantNodes, syncToNode } from "../lib/sync.js";
 import { logger } from "../logger.js";
 import {
   upsertNodeDnsRecord,
@@ -238,15 +238,7 @@ tenantsRoutes.put(
       }
     }
 
-    const assignedNodes = await db
-      .selectFrom("tenant_nodes")
-      .select(["node_id"])
-      .where("tenant_id", "=", id)
-      .execute();
-
-    for (const { node_id } of assignedNodes) {
-      syncToNode(node_id).catch((err: unknown) => logger.error(String(err)));
-    }
+    void syncTenantNodes(id);
 
     return c.json(result);
   },

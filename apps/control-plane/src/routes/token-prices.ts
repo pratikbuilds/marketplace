@@ -5,35 +5,12 @@ import {
   CreateTokenPriceSchema,
   UpdateTokenPriceSchema,
 } from "../lib/schemas.js";
-import { syncToNode } from "../lib/sync.js";
-import { logger } from "../logger.js";
+import { syncTenantNodes } from "../lib/sync.js";
 import { requireTenantAccess } from "../middleware/auth.js";
 import {
   createResourceLimiter,
   modifyResourceLimiter,
 } from "../middleware/rate-limit.js";
-
-async function syncTenantNodes(tenantId: number) {
-  const tenant = await db
-    .selectFrom("tenants")
-    .select("status")
-    .where("id", "=", tenantId)
-    .executeTakeFirst();
-
-  if (!tenant || tenant.status === "registered") {
-    return;
-  }
-
-  const tenantNodes = await db
-    .selectFrom("tenant_nodes")
-    .select("node_id")
-    .where("tenant_id", "=", tenantId)
-    .execute();
-
-  for (const tn of tenantNodes) {
-    syncToNode(tn.node_id).catch((err: unknown) => logger.error(String(err)));
-  }
-}
 
 export const tokenPricesRoutes = new Hono();
 

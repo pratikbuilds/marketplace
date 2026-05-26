@@ -5,7 +5,7 @@ import safe from "safe-regex2";
 import { arktypeValidator } from "@hono/arktype-validator";
 import { parsePagination } from "../lib/validation.js";
 import { CreateEndpointSchema, UpdateEndpointSchema } from "../lib/schemas.js";
-import { syncToNode } from "../lib/sync.js";
+import { syncTenantNodes } from "../lib/sync.js";
 import { syncOpenApiSpec } from "../lib/openapi-sync.js";
 import { logger } from "../logger.js";
 import { requireTenantAccess } from "../middleware/auth.js";
@@ -47,28 +47,6 @@ function processPathPattern(input: string): {
 
   // Literal path (for prefix matching in Lua)
   return { path: input, path_pattern: input };
-}
-
-async function syncTenantNodes(tenantId: number) {
-  const tenant = await db
-    .selectFrom("tenants")
-    .select("status")
-    .where("id", "=", tenantId)
-    .executeTakeFirst();
-
-  if (!tenant || tenant.status === "registered") {
-    return;
-  }
-
-  const tenantNodes = await db
-    .selectFrom("tenant_nodes")
-    .select("node_id")
-    .where("tenant_id", "=", tenantId)
-    .execute();
-
-  for (const tn of tenantNodes) {
-    syncToNode(tn.node_id).catch((err: unknown) => logger.error(String(err)));
-  }
 }
 
 export const endpointsRoutes = new Hono();
