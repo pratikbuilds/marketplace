@@ -2236,7 +2236,7 @@ await t.test("POST /api/organizations/:id/tenants", async (t) => {
     t.equal(data.name, "my-new-proxy");
     t.equal(data.backend_url, "http://backend.com");
     t.equal(data.default_price, 0);
-    t.equal(data.default_scheme, "exact");
+    t.equal(data.default_scheme, "flex");
   });
 
   await t.test("creates tenant with all optional fields", async (t) => {

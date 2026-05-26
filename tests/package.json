@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@faremeter/fetch": "link:../../faremeter/packages/fetch",
-    "@faremeter/flex-solana": "catalog:",
+    "@faremeter/flex-solana": "0.2.1",
     "@faremeter/gateway-nginx": "link:../../faremeter/packages/gateway-nginx",
     "@faremeter/info": "link:../../faremeter/packages/info",
     "@faremeter/logs": "link:../../faremeter/packages/logs",

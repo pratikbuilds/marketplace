@@ -10,6 +10,7 @@ import {
   Pencil1Icon,
 } from "@radix-ui/react-icons";
 import { AdminEditEndpointDialog } from "./admin-edit-endpoint-dialog";
+import { RootPricingRulesDialog } from "@/components/proxy-endpoints/root-pricing-rules-dialog";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import * as AlertDialog from "@radix-ui/react-alert-dialog";
 import { InlinePriceEdit } from "@/components/shared/inline-price-edit";
@@ -64,6 +65,10 @@ export function AdminEndpointsTable({
     null,
   );
   const [editingEndpoint, setEditingEndpoint] = useState<Endpoint | null>(null);
+  const [editingInitialScheme, setEditingInitialScheme] = useState<
+    string | undefined
+  >(undefined);
+  const [rootPricingOpen, setRootPricingOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const {
@@ -170,6 +175,10 @@ export function AdminEndpointsTable({
                 hasOpenApiSpec={hasOpenApiSpec}
                 onUpdate={() => void mutate()}
                 onEdit={() => setEditingEndpoint(endpoint)}
+                onEditWithScheme={(selectedScheme) => {
+                  setEditingInitialScheme(selectedScheme);
+                  setEditingEndpoint(endpoint);
+                }}
                 onDelete={() => setEndpointToDelete(endpoint)}
               />
             ))}
@@ -182,6 +191,7 @@ export function AdminEndpointsTable({
                 void mutate();
                 onDefaultsChange?.();
               }}
+              onEditRootPricing={() => setRootPricingOpen(true)}
             />
           </tbody>
         </table>
@@ -227,13 +237,29 @@ export function AdminEndpointsTable({
           tenantId={tenantId}
           defaultPrice={defaultPrice}
           defaultScheme={defaultScheme}
-          onClose={() => setEditingEndpoint(null)}
+          initialScheme={editingInitialScheme}
+          onClose={() => {
+            setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
+          }}
           onSuccess={() => {
             setEditingEndpoint(null);
+            setEditingInitialScheme(undefined);
             void mutate();
           }}
         />
       )}
+
+      <RootPricingRulesDialog
+        open={rootPricingOpen}
+        onOpenChange={setRootPricingOpen}
+        tenantId={tenantId}
+        defaultSchemeApiEndpoint={`/api/admin/tenants/${tenantId}`}
+        onSaved={() => {
+          void mutate();
+          onDefaultsChange?.();
+        }}
+      />
     </div>
   );
 }
@@ -246,6 +272,7 @@ function EndpointRow({
   hasOpenApiSpec,
   onUpdate,
   onEdit,
+  onEditWithScheme,
   onDelete,
 }: {
   endpoint: Endpoint;
@@ -255,6 +282,7 @@ function EndpointRow({
   hasOpenApiSpec: boolean;
   onUpdate: () => void;
   onEdit: () => void;
+  onEditWithScheme: (scheme: string) => void;
   onDelete: () => void;
 }) {
   const { data: analytics, isLoading } = useSWR(
@@ -267,6 +295,7 @@ function EndpointRow({
       endpoint.openapi_source_paths && endpoint.openapi_source_paths.length > 0,
     paths: endpoint.openapi_source_paths ?? [],
   };
+  const effectiveScheme = endpoint.scheme ?? defaultScheme;
 
   return (
     <tr className="hover:bg-gray-3">
@@ -290,19 +319,31 @@ function EndpointRow({
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <div className="flex items-center gap-2">
-          <InlinePriceEdit
-            priceMicro={endpoint.price ?? defaultPrice}
-            defaultPriceMicro={defaultPrice}
-            onUpdate={onUpdate}
-            apiEndpoint={`/api/admin/tenants/${tenantId}/endpoints/${endpoint.id}`}
-            fieldName="price"
-            label="Price"
-          />
-          {(endpoint.price ?? defaultPrice) === 0 && (
-            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-xs font-medium text-green-400 border border-green-800">
-              Free
-            </span>
+          {effectiveScheme === "flex" ? (
+            <button
+              type="button"
+              onClick={onEdit}
+              className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+            >
+              Dynamic
+              <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+            </button>
+          ) : (
+            <InlinePriceEdit
+              priceMicro={endpoint.price ?? defaultPrice}
+              defaultPriceMicro={defaultPrice}
+              onUpdate={onUpdate}
+              apiEndpoint={`/api/admin/tenants/${tenantId}/endpoints/${endpoint.id}`}
+              fieldName="price"
+              label="Price"
+            />
           )}
+          {effectiveScheme !== "flex" &&
+            (endpoint.price ?? defaultPrice) === 0 && (
+              <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-xs font-medium text-green-400 border border-green-800">
+                Free
+              </span>
+            )}
         </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3">
@@ -313,6 +354,7 @@ function EndpointRow({
           apiEndpoint={`/api/admin/tenants/${tenantId}/endpoints/${endpoint.id}`}
           fieldName="scheme"
           label="Scheme"
+          onFullEditRequired={onEditWithScheme}
         />
       </td>
       <td
@@ -422,12 +464,14 @@ function DefaultRow({
   defaultScheme,
   hasOpenApiSpec,
   onUpdate,
+  onEditRootPricing,
 }: {
   tenantId: number;
   defaultPrice: number;
   defaultScheme: string;
   hasOpenApiSpec: boolean;
   onUpdate: () => void;
+  onEditRootPricing: () => void;
 }) {
   const { data: analytics, isLoading } = useSWR(
     `/api/admin/tenants/${tenantId}/catch-all/analytics`,
@@ -447,17 +491,30 @@ function DefaultRow({
       </td>
       <td className="whitespace-nowrap px-4 py-3">
         <div className="flex items-center gap-2">
-          <InlinePriceEdit
-            priceMicro={defaultPrice}
-            onUpdate={onUpdate}
-            apiEndpoint={`/api/admin/tenants/${tenantId}`}
-            fieldName="default_price"
-            label="Default Price"
-          />
-          {defaultPrice === 0 && (
-            <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-xs font-medium text-green-400 border border-green-800">
-              Free
-            </span>
+          {defaultScheme === "flex" ? (
+            <button
+              type="button"
+              onClick={onEditRootPricing}
+              className="group flex items-center gap-1 rounded bg-gray-4 px-2 py-1 text-xs text-gray-11 hover:bg-gray-5"
+            >
+              Dynamic
+              <Pencil1Icon className="h-3 w-3 opacity-50 group-hover:opacity-100" />
+            </button>
+          ) : (
+            <>
+              <InlinePriceEdit
+                priceMicro={defaultPrice}
+                onUpdate={onUpdate}
+                apiEndpoint={`/api/admin/tenants/${tenantId}`}
+                fieldName="default_price"
+                label="Default Price"
+              />
+              {defaultPrice === 0 && (
+                <span className="rounded bg-green-900/50 px-1.5 py-0.5 text-xs font-medium text-green-400 border border-green-800">
+                  Free
+                </span>
+              )}
+            </>
           )}
         </div>
       </td>
@@ -468,6 +525,7 @@ function DefaultRow({
           apiEndpoint={`/api/admin/tenants/${tenantId}`}
           fieldName="default_scheme"
           label="Default Scheme"
+          onFullEditRequired={onEditRootPricing}
         />
       </td>
       <td

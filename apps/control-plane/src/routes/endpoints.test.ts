@@ -6,6 +6,7 @@ import { db, setupTestSchema, clearTestData } from "../db/instance.js";
 import { signToken } from "../middleware/auth.js";
 import { endpointsRoutes } from "./endpoints.js";
 import { OPENAPI_USPTO } from "../tests/fixtures/openapi-spec.js";
+import { isRecord } from "../lib/pricing-rules.js";
 
 const EndpointResponse = type({
   id: "number",
@@ -390,6 +391,189 @@ await t.test("POST /api/tenants/:tenantId/endpoints", async (t) => {
     t.equal(data.path, "/users/{userId}/orders/{orderId}");
     t.equal(data.path_pattern, "^/users/[^/]+/orders/[^/]+$");
   });
+
+  await t.test("creates endpoint and pricing rules atomically", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-tenant");
+
+    await db
+      .updateTable("tenants")
+      .set({
+        openapi_spec: JSON.stringify({
+          openapi: "3.0.3",
+          info: { title: "API", version: "1.0.0" },
+          paths: {
+            "/v1/items": {
+              post: { summary: "Items" },
+            },
+          },
+        }),
+      })
+      .where("id", "=", tenant.id)
+      .execute();
+
+    const rules = [
+      {
+        match: "$",
+        authorize: "1000000",
+        capture: "$.response.body.data.length * 10000",
+      },
+    ];
+
+    const res = await app.request(`/api/tenants/${tenant.id}/endpoints`, {
+      method: "POST",
+      headers: {
+        Cookie: `auth_token=${user.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        path: "/v1/items",
+        scheme: "flex",
+        http_method: "POST",
+        openapi_source_paths: ["/v1/items"],
+        pricing_rules: rules,
+      }),
+    });
+
+    t.equal(res.status, 201);
+    const data = EndpointResponse.assert(await res.json());
+    t.equal(data.path, "/v1/items");
+
+    const updated = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", tenant.id)
+      .executeTakeFirstOrThrow();
+    const spec = updated.openapi_spec as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const pricing = spec.paths["/v1/items"]?.post?.["x-faremeter-pricing"] as
+      | Record<string, unknown>
+      | undefined;
+    t.same(pricing?.rules, rules);
+  });
+
+  await t.test(
+    "preserves imported pricing when endpoint create omits inline rules",
+    async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const importedRules = [
+        {
+          match: "$",
+          authorize: "1000000",
+          capture: "$.response.body.total * 10000",
+        },
+      ];
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: {
+                  summary: "Items",
+                  "x-faremeter-pricing": { rules: importedRules },
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      const res = await app.request(`/api/tenants/${tenant.id}/endpoints`, {
+        method: "POST",
+        headers: {
+          Cookie: `auth_token=${user.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path: "/v1/items",
+          scheme: "flex",
+          http_method: "POST",
+          openapi_source_paths: ["/v1/items"],
+        }),
+      });
+
+      t.equal(res.status, 201);
+
+      const updated = await db
+        .selectFrom("tenants")
+        .select("openapi_spec")
+        .where("id", "=", tenant.id)
+        .executeTakeFirstOrThrow();
+      const spec = OpenApiSpec.assert(updated.openapi_spec);
+      const itemsPath = spec.paths["/v1/items"];
+      if (!isRecord(itemsPath)) {
+        throw new Error("expected /v1/items path item");
+      }
+      const postOperation = itemsPath.post;
+      if (!isRecord(postOperation)) {
+        throw new Error("expected POST operation");
+      }
+      const pricing = postOperation["x-faremeter-pricing"];
+      t.same(pricing, { rules: importedRules });
+    },
+  );
+
+  await t.test(
+    "does not create endpoint when inline pricing rules are invalid",
+    async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: { summary: "Items" },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      const res = await app.request(`/api/tenants/${tenant.id}/endpoints`, {
+        method: "POST",
+        headers: {
+          Cookie: `auth_token=${user.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          path: "/v1/items",
+          scheme: "flex",
+          http_method: "POST",
+          openapi_source_paths: ["/v1/items"],
+          pricing_rules: [
+            { match: "$", capture: "$.response.body.data.length *" },
+          ],
+        }),
+      });
+
+      t.equal(res.status, 400);
+      const endpoints = await db
+        .selectFrom("endpoints")
+        .select("id")
+        .where("tenant_id", "=", tenant.id)
+        .execute();
+      t.same(endpoints, []);
+    },
+  );
 
   await t.test("creates endpoint with regex path", async (t) => {
     const user = await createUser("member@example.com");
@@ -840,6 +1024,141 @@ await t.test("PUT /api/tenants/:tenantId/endpoints/:id", async (t) => {
     t.equal(data.description, "Updated description");
   });
 
+  await t.test("updates endpoint and pricing rules atomically", async (t) => {
+    const user = await createUser("member@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(user.id, org.id);
+    const tenant = await createTenant(org.id, "my-tenant");
+    const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+    await db
+      .updateTable("tenants")
+      .set({
+        openapi_spec: JSON.stringify({
+          openapi: "3.0.3",
+          info: { title: "API", version: "1.0.0" },
+          paths: {
+            "/v1/items": {
+              post: { summary: "Items" },
+            },
+          },
+        }),
+      })
+      .where("id", "=", tenant.id)
+      .execute();
+
+    await db
+      .updateTable("endpoints")
+      .set({
+        openapi_source_paths: ["/v1/items"],
+        http_method: "POST",
+      })
+      .where("id", "=", endpoint.id)
+      .execute();
+
+    const rules = [
+      {
+        match: "$",
+        authorize: "1000000",
+        capture: "$.response.body.data.length * 10000",
+      },
+    ];
+
+    const res = await app.request(
+      `/api/tenants/${tenant.id}/endpoints/${endpoint.id}`,
+      {
+        method: "PUT",
+        headers: {
+          Cookie: `auth_token=${user.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          description: "Updated with rules",
+          pricing_rules: rules,
+        }),
+      },
+    );
+
+    t.equal(res.status, 200);
+    const data = EndpointResponse.assert(await res.json());
+    t.equal(data.description, "Updated with rules");
+
+    const updated = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", tenant.id)
+      .executeTakeFirstOrThrow();
+    const spec = updated.openapi_spec as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const pricing = spec.paths["/v1/items"]?.post?.["x-faremeter-pricing"] as
+      | Record<string, unknown>
+      | undefined;
+    t.same(pricing?.rules, rules);
+  });
+
+  await t.test(
+    "does not update endpoint fields when inline pricing rules are invalid",
+    async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: { summary: "Items" },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          description: "Original",
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}`,
+        {
+          method: "PUT",
+          headers: {
+            Cookie: `auth_token=${user.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            description: "Should not persist",
+            pricing_rules: [
+              { match: "$", capture: "$.response.body.data.length *" },
+            ],
+          }),
+        },
+      );
+
+      t.equal(res.status, 400);
+      const unchanged = await db
+        .selectFrom("endpoints")
+        .select("description")
+        .where("id", "=", endpoint.id)
+        .executeTakeFirstOrThrow();
+      t.equal(unchanged.description, "Original");
+    },
+  );
+
   await t.test("updates http_method", async (t) => {
     const user = await createUser("member@example.com");
     const org = await createOrg("Team", "team");
@@ -1113,6 +1432,269 @@ await t.test("PUT /api/tenants/:tenantId/endpoints/:id", async (t) => {
     t.equal(res.status, 200);
   });
 });
+
+await t.test(
+  "GET /api/tenants/:tenantId/endpoints/:id/pricing-rules",
+  async (t) => {
+    await t.test("returns rules for OpenAPI-backed endpoint", async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: {
+                  "x-faremeter-pricing": {
+                    rules: [{ match: "$", capture: "10000" }],
+                  },
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}/pricing-rules`,
+        {
+          headers: { Cookie: `auth_token=${user.token}` },
+        },
+      );
+
+      t.equal(res.status, 200);
+      const data = (await res.json()) as {
+        rules: unknown[];
+        editable: boolean;
+      };
+      t.equal(data.editable, true);
+      t.same(data.rules, [{ match: "$", capture: "10000" }]);
+    });
+
+    await t.test("returns inherited root pricing rules", async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            "x-faremeter-pricing": {
+              rules: [{ match: "$", capture: "20000" }],
+            },
+            paths: {
+              "/v1/items": {
+                post: {
+                  summary: "Items",
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}/pricing-rules`,
+        {
+          headers: { Cookie: `auth_token=${user.token}` },
+        },
+      );
+
+      t.equal(res.status, 200);
+      const data = (await res.json()) as {
+        rules: unknown[];
+        editable: boolean;
+      };
+      t.equal(data.editable, true);
+      t.same(data.rules, [{ match: "$", capture: "20000" }]);
+    });
+
+    await t.test("marks orphan endpoint as not editable", async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/manual");
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}/pricing-rules`,
+        {
+          headers: { Cookie: `auth_token=${user.token}` },
+        },
+      );
+
+      t.equal(res.status, 200);
+      const data = (await res.json()) as {
+        rules: unknown[];
+        editable: boolean;
+        reason: string;
+      };
+      t.equal(data.editable, false);
+      t.same(data.rules, []);
+      t.match(data.reason, /OpenAPI-backed/);
+    });
+  },
+);
+
+await t.test(
+  "PUT /api/tenants/:tenantId/endpoints/:id/pricing-rules",
+  async (t) => {
+    await t.test("updates operation pricing rules", async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: {
+                  summary: "Items",
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const rules = [
+        {
+          match: "$",
+          authorize: "1000000",
+          capture: "$.response.body.data.length * 10000",
+        },
+      ];
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}/pricing-rules`,
+        {
+          method: "PUT",
+          headers: {
+            Cookie: `auth_token=${user.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ rules }),
+        },
+      );
+
+      t.equal(res.status, 200);
+
+      const updated = await db
+        .selectFrom("tenants")
+        .select("openapi_spec")
+        .where("id", "=", tenant.id)
+        .executeTakeFirstOrThrow();
+      const spec = updated.openapi_spec as {
+        paths: Record<string, Record<string, Record<string, unknown>>>;
+      };
+      const post = spec.paths["/v1/items"]?.post;
+      if (!post) throw new Error("expected POST operation");
+      const pricing = post["x-faremeter-pricing"] as Record<string, unknown>;
+      t.same(pricing.rules, rules);
+    });
+
+    await t.test("rejects invalid pricing expressions", async (t) => {
+      const user = await createUser("member@example.com");
+      const org = await createOrg("Team", "team");
+      await addMember(user.id, org.id);
+      const tenant = await createTenant(org.id, "my-tenant");
+      const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+      await db
+        .updateTable("tenants")
+        .set({
+          openapi_spec: JSON.stringify({
+            openapi: "3.0.3",
+            info: { title: "API", version: "1.0.0" },
+            paths: {
+              "/v1/items": {
+                post: {
+                  summary: "Items",
+                },
+              },
+            },
+          }),
+        })
+        .where("id", "=", tenant.id)
+        .execute();
+
+      await db
+        .updateTable("endpoints")
+        .set({
+          openapi_source_paths: ["/v1/items"],
+          http_method: "POST",
+        })
+        .where("id", "=", endpoint.id)
+        .execute();
+
+      const res = await app.request(
+        `/api/tenants/${tenant.id}/endpoints/${endpoint.id}/pricing-rules`,
+        {
+          method: "PUT",
+          headers: {
+            Cookie: `auth_token=${user.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            rules: [{ match: "$", capture: "$.response.body.data.length *" }],
+          }),
+        },
+      );
+
+      t.equal(res.status, 400);
+      const data = ErrorResponse.assert(await res.json());
+      t.match(data.error, /must not reference \$\.response/);
+    });
+  },
+);
 
 await t.test("DELETE /api/tenants/:tenantId/endpoints/:id", async (t) => {
   await t.test("returns 404 for non-existent endpoint", async (t) => {

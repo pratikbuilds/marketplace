@@ -137,7 +137,7 @@ export function ImportOrgsDialog({
     let rowStart = 0;
     while (
       rowStart < data.length &&
-      data[rowStart].every((cell) => !cell?.toString().trim())
+      data[rowStart].every((cell) => !cell?.trim())
     ) {
       rowStart++;
     }
@@ -151,15 +151,13 @@ export function ImportOrgsDialog({
     let colStart = 0;
     const maxCols = Math.max(...rowsWithData.map((r) => r.length));
     while (colStart < maxCols) {
-      const colHasData = rowsWithData.some((row) =>
-        row[colStart]?.toString().trim(),
-      );
+      const colHasData = rowsWithData.some((row) => row[colStart]?.trim());
       if (colHasData) break;
       colStart++;
     }
 
     const filtered = rowsWithData
-      .filter((row) => row.some((cell) => cell?.toString().trim() !== ""))
+      .filter((row) => row.some((cell) => (cell ?? "").trim() !== ""))
       .map((row) => row.slice(colStart).map((c) => c ?? ""));
 
     if (filtered.length < 1) {

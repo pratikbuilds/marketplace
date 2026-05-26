@@ -14,6 +14,7 @@ interface InlineSchemeEditProps {
   apiEndpoint: string;
   fieldName?: string;
   label?: string;
+  onFullEditRequired?: (scheme: string) => void;
 }
 
 export function InlineSchemeEdit({
@@ -23,6 +24,7 @@ export function InlineSchemeEdit({
   apiEndpoint,
   fieldName = "default_scheme",
   label = "Default Scheme",
+  onFullEditRequired,
 }: InlineSchemeEditProps) {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -30,6 +32,12 @@ export function InlineSchemeEdit({
   const [selectedScheme, setSelectedScheme] = useState(scheme);
 
   const handleSave = async () => {
+    if (selectedScheme === "flex" && onFullEditRequired) {
+      onFullEditRequired(selectedScheme);
+      setIsOpen(false);
+      return;
+    }
+
     setIsSaving(true);
     try {
       // If defaultScheme is provided and value matches, send null to use default

@@ -1,7 +1,13 @@
 import { type } from "arktype";
 import { db } from "../db/instance.js";
 import { logger } from "../logger.js";
+import { DEFAULT_TENANT_SCHEME } from "./schemas.js";
 import { endpointPathToOpenApiPath } from "./openapi-sync.js";
+import {
+  getOpenApiSpec,
+  getPricingRulesFromObject,
+  isRecord,
+} from "./pricing-rules.js";
 
 const WalletEntry = type({ "address?": "string" });
 
@@ -50,6 +56,7 @@ export type GatewaySpecResult = {
   spec: Record<string, unknown>;
   warnings: string[];
   operationKeyToEndpointId: Record<string, number>;
+  operationKeyToScheme: Record<string, "exact" | "flex">;
 };
 
 type TokenPriceRow = {
@@ -82,24 +89,8 @@ export type GatewaySpecInput = {
   tokenPrices: TokenPriceRow[];
 };
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function parseImportedSpec(raw: unknown): Record<string, unknown> | null {
-  if (isRecord(raw)) {
-    return raw;
-  }
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+  return getOpenApiSpec(raw);
 }
 
 function getRecordProperty(
@@ -113,15 +104,7 @@ function getRecordProperty(
 function getImportedPricingRules(
   obj: Record<string, unknown> | null | undefined,
 ): Record<string, unknown>[] | null {
-  const pricing = getRecordProperty(obj, "x-faremeter-pricing");
-  const rules = pricing?.rules;
-  if (!Array.isArray(rules)) {
-    return null;
-  }
-  if (!rules.every(isRecord)) {
-    return null;
-  }
-  return structuredClone(rules);
+  return getPricingRulesFromObject(obj) as Record<string, unknown>[] | null;
 }
 
 function getImportedOperationPricingRules(
@@ -195,11 +178,12 @@ export function buildTenantGatewaySpecFromData(
 
   const paths: Record<string, unknown> = {};
   const operationKeyToEndpointId: Record<string, number> = {};
+  const operationKeyToScheme: Record<string, "exact" | "flex"> = {};
 
   for (const endpoint of endpoints) {
     // Keep legacy "free" rows excluded while new code treats price 0 as
     // endpoint payment status rather than as a payment scheme.
-    if (endpoint.price === 0 || endpoint.scheme === "free") continue;
+    if (endpoint.scheme === "free") continue;
 
     const sourcePaths = endpoint.openapi_source_paths;
     const resolvedPaths: string[] = [];
@@ -221,6 +205,7 @@ export function buildTenantGatewaySpecFromData(
     }
 
     // Determine pricing rules for this endpoint
+    const endpointScheme = getEndpointScheme(endpoint, input.defaultScheme);
     const epPrices = endpointPriceMap.get(endpoint.id) ?? [];
     const pricingResult = buildPricingRules(
       endpoint,
@@ -261,22 +246,25 @@ export function buildTenantGatewaySpecFromData(
           continue;
         }
 
-        const existingValue = paths[openApiPath];
-        const existing = isRecord(existingValue) ? existingValue : {};
+        const existing =
+          (paths[openApiPath] as Record<string, unknown> | undefined) ?? {};
         const importedPricingRules = getImportedOperationPricingRules(
           importedSpec,
           openApiPath,
           methodLower,
         );
-        if (importedPricingRules !== null) {
-          warnings.push(
-            `Endpoint ${endpoint.id}: pricing for "${method} ${openApiPath}" sourced from imported OpenAPI spec — marketplace token prices ignored for this operation`,
-          );
+        if (endpoint.price === 0 && importedPricingRules === null) {
+          continue;
         }
         const operationPricingExtension =
           importedPricingRules !== null
             ? { "x-faremeter-pricing": { rules: importedPricingRules } }
             : pricingExtension;
+        const operationScheme =
+          importedPricingRules !== null &&
+          pricingRulesRequireFlex(importedPricingRules)
+            ? "flex"
+            : endpointScheme;
 
         existing[methodLower] = {
           summary: endpoint.description ?? `Endpoint: ${openApiPath}`,
@@ -286,6 +274,7 @@ export function buildTenantGatewaySpecFromData(
         paths[openApiPath] = existing;
 
         operationKeyToEndpointId[operationKey] = endpoint.id;
+        operationKeyToScheme[operationKey] = operationScheme;
       }
     }
   }
@@ -297,6 +286,10 @@ export function buildTenantGatewaySpecFromData(
   for (const alias of Object.keys(assets)) {
     rates[alias] = 1;
   }
+  const importedRootPricing = getRecordProperty(
+    importedSpec,
+    "x-faremeter-pricing",
+  );
 
   const spec: Record<string, unknown> = {
     openapi: "3.0.3",
@@ -306,12 +299,27 @@ export function buildTenantGatewaySpecFromData(
     },
     "x-faremeter-assets": assets,
     "x-faremeter-pricing": {
+      ...(importedRootPricing ?? {}),
       rates,
     },
     paths,
   };
 
-  return { spec, warnings, operationKeyToEndpointId };
+  return { spec, warnings, operationKeyToEndpointId, operationKeyToScheme };
+}
+
+function getEndpointScheme(
+  endpoint: EndpointRow,
+  defaultScheme: string | null | undefined,
+): "exact" | "flex" {
+  const scheme = endpoint.scheme ?? defaultScheme ?? DEFAULT_TENANT_SCHEME;
+  return scheme === "flex" ? "flex" : "exact";
+}
+
+function pricingRulesRequireFlex(rules: Record<string, unknown>[]): boolean {
+  return rules.some(
+    (rule) => typeof rule.authorize === "string" && rule.authorize.length > 0,
+  );
 }
 
 export async function buildTenantGatewaySpec(

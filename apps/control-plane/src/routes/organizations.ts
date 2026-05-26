@@ -42,6 +42,7 @@ import {
 import { arktypeValidator } from "@hono/arktype-validator";
 import {
   OrgCreateTenantSchema,
+  DEFAULT_TENANT_SCHEME,
   OrgUpdateTenantSchema,
   AddMemberSchema,
   UpdateMemberSchema,
@@ -52,6 +53,10 @@ import {
   seedTokenPricesForTenant,
   getUsdPeggedSymbols,
 } from "../lib/token-seed.js";
+import {
+  createOpenApiSpecWithRootPricingRules,
+  validateSpecPricingRules,
+} from "../lib/pricing-rules.js";
 
 export const organizationsRoutes = new Hono();
 
@@ -1204,6 +1209,20 @@ organizationsRoutes.post(
 
     const nodeIds = nodesWithCounts.map((n) => n.id);
 
+    const rootPricingSpec =
+      body.pricing_rules !== undefined
+        ? createOpenApiSpecWithRootPricingRules(
+            sanitizedName,
+            body.pricing_rules,
+          )
+        : null;
+    if (rootPricingSpec) {
+      const validationError = validateSpecPricingRules(rootPricingSpec);
+      if (validationError) {
+        return c.json({ error: validationError }, 400);
+      }
+    }
+
     const tenant = await db.transaction().execute(async (trx) => {
       const t = await trx
         .insertInto("tenants")
@@ -1213,9 +1232,12 @@ organizationsRoutes.post(
           organization_id: orgId,
           wallet_id: body.wallet_id ?? null,
           default_price: body.default_price ?? 0,
-          default_scheme: body.default_scheme ?? "exact",
+          default_scheme: body.default_scheme ?? DEFAULT_TENANT_SCHEME,
           upstream_auth_header: body.upstream_auth_header ?? null,
           upstream_auth_value: body.upstream_auth_value ?? null,
+          ...(rootPricingSpec !== null && {
+            openapi_spec: JSON.stringify(rootPricingSpec),
+          }),
           org_slug: org.slug,
           is_active: !isRegisterOnly,
           status: isRegisterOnly ? "registered" : "pending",

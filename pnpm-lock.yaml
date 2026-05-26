@@ -9,9 +9,6 @@ catalogs:
     '@eslint/js':
       specifier: 9.34.0
       version: 9.34.0
-    '@faremeter/flex-solana':
-      specifier: 0.2.1
-      version: 0.2.1
     '@faremeter/gateway-nginx':
       specifier: 0.21.0
       version: 0.21.0
@@ -434,6 +431,9 @@ importers:
       arktype:
         specifier: 'catalog:'
         version: 2.2.0
+      bs58:
+        specifier: 'catalog:'
+        version: 6.0.0
       geist:
         specifier: ^1.5.1
         version: 1.7.0(next@15.5.15(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))
@@ -650,7 +650,7 @@ importers:
         specifier: link:../../faremeter/packages/fetch
         version: link:../../faremeter/packages/fetch
       '@faremeter/flex-solana':
-        specifier: 'catalog:'
+        specifier: 0.2.1
         version: 0.2.1(@logtape/logtape@1.0.4)(bufferutil@4.1.0)(fastestsmallesttextencoderdecoder@1.0.22)(typescript@5.9.3)(utf-8-validate@6.0.6)
       '@faremeter/gateway-nginx':
         specifier: link:../../faremeter/packages/gateway-nginx

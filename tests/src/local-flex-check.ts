@@ -54,12 +54,21 @@ const PAYER_KEYPAIR_PATH =
   "/workspace/marketplace/keypairs/client-devnet.json";
 const FLEX_PRICE = process.env.LOCAL_FLEX_PRICE ?? "1000";
 const FLEX_TENANT_NAME = `demo-flex-api-${Date.now()}`;
-const FLEX_ENDPOINT_PATH = "/v1/chat/completions";
+const FLEX_ENDPOINT_PREFIX =
+  process.env.LOCAL_FLEX_ENDPOINT_PREFIX ?? "/v1/local-check/flex-pricing";
 const FLEX_PROXY_HOST = `${FLEX_TENANT_NAME}.local.proxy.localhost`;
+let currentFlexProxyHost = FLEX_PROXY_HOST;
+const EXISTING_FLEX_TENANT_ID = process.env.LOCAL_FLEX_EXISTING_TENANT_ID
+  ? Number(process.env.LOCAL_FLEX_EXISTING_TENANT_ID)
+  : null;
 const DYNAMIC_MODEL = "gpt-4o";
 const DYNAMIC_MAX_TOKENS = 20;
 const DYNAMIC_MESSAGES = [{ role: "user", content: "hello" }];
-const EXPECTED_CAPTURE_AMOUNT = 11 * 10 + 7 * 30;
+const RESPONSE_USAGE = {
+  promptTokens: 11,
+  completionTokens: 7,
+  totalTokens: 18,
+};
 
 const rawSolanaCluster = process.env.SOLANA_NETWORK ?? "devnet";
 if (!solana.isKnownCluster(rawSolanaCluster)) {
@@ -86,7 +95,7 @@ const EXPECTED_SOLANA_NETWORKS = new Set([
 ]);
 
 const FLEX_PRICE_ATOMIC = BigInt(FLEX_PRICE);
-const DEPOSIT_AMOUNT = Number(FLEX_PRICE_ATOMIC * 20n);
+const DEPOSIT_AMOUNT = Number(FLEX_PRICE_ATOMIC * 250n);
 const REFUND_TIMEOUT_SLOTS = 150;
 const DEADMAN_TIMEOUT_SLOTS = 100_000;
 const MAX_SESSION_KEYS = 10;
@@ -142,6 +151,154 @@ type PaymentRequirement = {
   maxAmountRequired?: unknown;
   amount?: unknown;
 };
+
+type PricingRule = {
+  match: string;
+  authorize?: string;
+  capture: string;
+};
+
+type FlexPricingScenario = {
+  name: string;
+  path: string;
+  body: Record<string, unknown>;
+  rules: PricingRule[];
+  pricingSource:
+    | "api-update"
+    | "import-root"
+    | "import-path"
+    | "import-operation";
+  pathRules?: PricingRule[];
+  expectedRequirementAmount: string;
+  expectedCaptureAmount: number;
+};
+
+function proxyHostForTenant(tenantName: string): string {
+  return `${tenantName}.local.proxy.localhost`;
+}
+
+const FLEX_PRICING_SCENARIOS: FlexPricingScenario[] = [
+  {
+    name: "upfront-fixed-catch-all",
+    path: `${FLEX_ENDPOINT_PREFIX}-upfront-fixed`,
+    body: { model: DYNAMIC_MODEL },
+    rules: [{ match: "$", capture: "12300" }],
+    pricingSource: "api-update",
+    expectedRequirementAmount: "12300",
+    expectedCaptureAmount: 12_300,
+  },
+  {
+    name: "upfront-request-field-equals",
+    path: `${FLEX_ENDPOINT_PREFIX}-upfront-field`,
+    body: { model: DYNAMIC_MODEL, quantity: 4 },
+    rules: [
+      {
+        match: '$[?@.request.body.model == "gpt-4o"]',
+        capture: "$.request.body.quantity * 2500",
+      },
+    ],
+    pricingSource: "api-update",
+    expectedRequirementAmount: "10000",
+    expectedCaptureAmount: 10_000,
+  },
+  {
+    name: "upfront-request-size-exists",
+    path: `${FLEX_ENDPOINT_PREFIX}-upfront-size`,
+    body: {
+      metadata: { tier: "pro" },
+      payload: "abcdef",
+    },
+    rules: [
+      {
+        match: "$[?@.request.body.metadata.tier]",
+        capture: "jsonSize($.request.body.payload) * 700",
+      },
+    ],
+    pricingSource: "api-update",
+    expectedRequirementAmount: String(JSON.stringify("abcdef").length * 700),
+    expectedCaptureAmount: JSON.stringify("abcdef").length * 700,
+  },
+  {
+    name: "after-response-regex",
+    path: `${FLEX_ENDPOINT_PREFIX}-after-response-regex`,
+    body: {
+      model: "claude-sonnet-4",
+      max_tokens: DYNAMIC_MAX_TOKENS,
+      messages: DYNAMIC_MESSAGES,
+    },
+    rules: [
+      {
+        match: '$[?match(@.request.body.model, "claude-sonnet.*")]',
+        authorize:
+          "(jsonSize($.request.body.messages) * 1200 / 4 + coalesce($.request.body.max_tokens, 1024) * 6000) * 125 / 100",
+        capture:
+          "$.response.body.usage.prompt_tokens * 1200 + $.response.body.usage.completion_tokens * 6000",
+      },
+    ],
+    pricingSource: "api-update",
+    expectedRequirementAmount: String(
+      Math.ceil(
+        ((JSON.stringify(DYNAMIC_MESSAGES).length * 1200) / 4 +
+          DYNAMIC_MAX_TOKENS * 6000) *
+          1.25,
+      ),
+    ),
+    expectedCaptureAmount:
+      RESPONSE_USAGE.promptTokens * 1200 +
+      RESPONSE_USAGE.completionTokens * 6000,
+  },
+  {
+    name: "after-response-catch-all-coalesce",
+    path: `${FLEX_ENDPOINT_PREFIX}-after-response-catch-all`,
+    body: {
+      model: "other-model",
+      messages: DYNAMIC_MESSAGES,
+    },
+    rules: [
+      {
+        match: "$",
+        authorize:
+          "(jsonSize($.request.body.messages) / 4 * 10 + coalesce($.request.body.max_tokens, 1024) * 40) * 120 / 100",
+        capture: "$.response.body.usage.total_tokens * 2000",
+      },
+    ],
+    pricingSource: "api-update",
+    expectedRequirementAmount: String(
+      Math.ceil(
+        ((JSON.stringify(DYNAMIC_MESSAGES).length / 4) * 10 + 1024 * 40) * 1.2,
+      ),
+    ),
+    expectedCaptureAmount: RESPONSE_USAGE.totalTokens * 2000,
+  },
+  {
+    name: "inherited-root-pricing",
+    path: `${FLEX_ENDPOINT_PREFIX}-inherited-root`,
+    body: { model: DYNAMIC_MODEL },
+    rules: [{ match: "$", capture: "31000" }],
+    pricingSource: "import-root",
+    expectedRequirementAmount: "31000",
+    expectedCaptureAmount: 31_000,
+  },
+  {
+    name: "inherited-path-pricing",
+    path: `${FLEX_ENDPOINT_PREFIX}-inherited-path`,
+    body: { model: DYNAMIC_MODEL },
+    rules: [{ match: "$", capture: "32000" }],
+    pricingSource: "import-path",
+    expectedRequirementAmount: "32000",
+    expectedCaptureAmount: 32_000,
+  },
+  {
+    name: "nearest-operation-pricing",
+    path: `${FLEX_ENDPOINT_PREFIX}-nearest-operation`,
+    body: { model: DYNAMIC_MODEL },
+    rules: [{ match: "$", capture: "33000" }],
+    pricingSource: "import-operation",
+    pathRules: [{ match: "$", capture: "1" }],
+    expectedRequirementAmount: "33000",
+    expectedCaptureAmount: 33_000,
+  },
+];
 
 function controlPlaneHealthUrl(): string {
   return `${CONTROL_PLANE_BASE_URL}/health`;
@@ -333,26 +490,47 @@ async function createFlexTokenPrice(
   }
 }
 
-async function deleteFlexTenant(
-  tenantId: number,
-  authCookie: string,
-): Promise<void> {
-  await apiJson<{ deleted: boolean }>(`/api/tenants/${tenantId}`, authCookie, {
-    method: "DELETE",
-  });
-}
-
-function expectedAuthorizeAmount(): string {
-  return String(
-    Math.ceil(
-      ((JSON.stringify(DYNAMIC_MESSAGES).length / 4) * 10 +
-        DYNAMIC_MAX_TOKENS * 30) *
-        1.15,
-    ),
-  );
-}
-
 function buildDynamicPricingSpec(recipient: Address): Record<string, unknown> {
+  const paths = Object.fromEntries(
+    FLEX_PRICING_SCENARIOS.map((scenario) => {
+      const pathItem: Record<string, unknown> = {};
+      if (
+        scenario.pricingSource === "import-path" ||
+        scenario.pricingSource === "import-operation"
+      ) {
+        pathItem["x-faremeter-pricing"] = {
+          rules: scenario.pathRules ?? scenario.rules,
+        };
+      }
+
+      const operation: Record<string, unknown> = {
+        summary: `Flex pricing scenario ${scenario.name}`,
+      };
+      if (
+        scenario.pricingSource === "api-update" ||
+        scenario.pricingSource === "import-operation"
+      ) {
+        operation["x-faremeter-pricing"] = {
+          rules:
+            scenario.pricingSource === "api-update"
+              ? [{ match: "$", capture: "1" }]
+              : scenario.rules,
+        };
+      }
+
+      pathItem.post = operation;
+
+      return [scenario.path, pathItem];
+    }),
+  );
+
+  const rootScenario = FLEX_PRICING_SCENARIOS.find(
+    (scenario) => scenario.pricingSource === "import-root",
+  );
+  if (!rootScenario) {
+    throw new Error("Local Flex check requires an imported root pricing case");
+  }
+
   return {
     openapi: "3.0.3",
     info: {
@@ -371,39 +549,9 @@ function buildDynamicPricingSpec(recipient: Address): Record<string, unknown> {
       rates: {
         "usdc-sol": 1,
       },
+      rules: rootScenario.rules,
     },
-    paths: {
-      [FLEX_ENDPOINT_PATH]: {
-        post: {
-          summary: "Token-metered chat completion",
-          "x-faremeter-pricing": {
-            rules: [
-              {
-                match: '$[?@.request.body.model == "gpt-4o"]',
-                authorize:
-                  "(jsonSize($.request.body.messages) / 4 * 10 + coalesce($.request.body.max_tokens, 1024) * 30) * 115 / 100",
-                capture:
-                  "$.response.body.usage.prompt_tokens * 10 + $.response.body.usage.completion_tokens * 30",
-              },
-              {
-                match: '$[?match(@.request.body.model, "claude-sonnet.*")]',
-                authorize:
-                  "(jsonSize($.request.body.messages) * 12 / 4 + coalesce($.request.body.max_tokens, 1024) * 60) * 125 / 100",
-                capture:
-                  "$.response.body.usage.prompt_tokens * 12 + $.response.body.usage.completion_tokens * 60",
-              },
-              {
-                match: "$",
-                authorize:
-                  "(jsonSize($.request.body.messages) / 4 * 10 + coalesce($.request.body.max_tokens, 1024) * 40) * 120 / 100",
-                capture:
-                  "$.response.body.usage.prompt_tokens * 10 + $.response.body.usage.completion_tokens * 40",
-              },
-            ],
-          },
-        },
-      },
-    },
+    paths,
   };
 }
 
@@ -431,7 +579,7 @@ async function importDynamicFlexEndpoint(
   tenantId: number,
   authCookie: string,
   recipient: Address,
-): Promise<EndpointRecord> {
+): Promise<Map<string, EndpointRecord>> {
   await apiJson(`/api/tenants/${tenantId}/openapi/import`, authCookie, {
     method: "POST",
     body: JSON.stringify({
@@ -439,22 +587,50 @@ async function importDynamicFlexEndpoint(
     }),
   });
 
+  return await findScenarioEndpoints(tenantId, authCookie);
+}
+
+async function findScenarioEndpoints(
+  tenantId: number,
+  authCookie: string,
+): Promise<Map<string, EndpointRecord>> {
   const endpoints = await apiJson<EndpointRecord[]>(
     `/api/tenants/${tenantId}/endpoints`,
     authCookie,
   );
-  const endpoint = endpoints.find((item) => item.path === FLEX_ENDPOINT_PATH);
-  if (!endpoint) {
-    throw new Error(
-      "Dynamic Flex endpoint was not created from OpenAPI import",
-    );
+  const byPath = new Map<string, EndpointRecord>();
+  for (const scenario of FLEX_PRICING_SCENARIOS) {
+    const endpoint = endpoints.find((item) => item.path === scenario.path);
+    if (!endpoint) {
+      throw new Error(
+        `Flex endpoint was not found for scenario: ${scenario.path}`,
+      );
+    }
+
+    if (endpoint.path !== scenario.path) {
+      throw new Error(`Unexpected Flex endpoint path: ${endpoint.path}`);
+    }
+
+    byPath.set(scenario.path, endpoint);
   }
 
-  if (endpoint.path !== FLEX_ENDPOINT_PATH) {
-    throw new Error(`Unexpected Flex endpoint path: ${endpoint.path}`);
-  }
+  return byPath;
+}
 
-  return endpoint;
+async function updatePricingRules(
+  tenantId: number,
+  endpoint: EndpointRecord,
+  authCookie: string,
+  rules: PricingRule[],
+): Promise<void> {
+  await apiJson(
+    `/api/tenants/${tenantId}/endpoints/${endpoint.id}/pricing-rules`,
+    authCookie,
+    {
+      method: "PUT",
+      body: JSON.stringify({ rules }),
+    },
+  );
 }
 
 async function getTransactions(
@@ -468,9 +644,11 @@ async function getTransactions(
 }
 
 async function waitForPaidEndpointTransaction(
+  scenarioName: string,
   tenantId: number,
   endpointId: number,
   authCookie: string,
+  expectedAmount: number,
 ): Promise<TransactionRecord> {
   const timeoutAt = Date.now() + 90_000;
 
@@ -478,7 +656,7 @@ async function waitForPaidEndpointTransaction(
     const transaction = (await getTransactions(tenantId, authCookie)).find(
       (item) =>
         item.endpoint_id === endpointId &&
-        item.amount === EXPECTED_CAPTURE_AMOUNT &&
+        item.amount === expectedAmount &&
         typeof item.tx_hash === "string" &&
         item.tx_hash.length > 0,
     );
@@ -489,7 +667,9 @@ async function waitForPaidEndpointTransaction(
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
 
-  throw new Error("Timed out waiting for paid Flex transaction recording");
+  throw new Error(
+    `Timed out waiting for paid Flex transaction recording for ${scenarioName} (endpoint ${endpointId}, expected amount ${expectedAmount})`,
+  );
 }
 
 function proxyUrlFor(path: string): string {
@@ -500,12 +680,8 @@ function proxyUrlFor(path: string): string {
   return url.toString();
 }
 
-function buildProxyBody(): string {
-  return JSON.stringify({
-    model: DYNAMIC_MODEL,
-    max_tokens: DYNAMIC_MAX_TOKENS,
-    messages: DYNAMIC_MESSAGES,
-  });
+function buildProxyBody(scenario: FlexPricingScenario): string {
+  return JSON.stringify(scenario.body);
 }
 
 function responseHeaders(
@@ -542,7 +718,7 @@ async function proxyFetch(
   const url = new URL(input.toString());
   const body = requestBodyToString(init.body);
   const headers = new Headers(init.headers);
-  headers.set("Host", FLEX_PROXY_HOST);
+  headers.set("Host", currentFlexProxyHost);
 
   if (body !== null) {
     headers.set("Content-Length", Buffer.byteLength(body).toString());
@@ -602,7 +778,10 @@ function getAccepts(body: unknown): PaymentRequirement[] {
   );
 }
 
-async function waitForFlexPaymentRequired(url: string): Promise<void> {
+async function waitForFlexPaymentRequired(
+  url: string,
+  scenario: FlexPricingScenario,
+): Promise<void> {
   const timeoutAt = Date.now() + 90_000;
   let lastError: unknown;
 
@@ -611,7 +790,7 @@ async function waitForFlexPaymentRequired(url: string): Promise<void> {
       const response = await proxyFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: buildProxyBody(),
+        body: buildProxyBody(scenario),
       });
 
       if (response.status === 402) {
@@ -624,7 +803,7 @@ async function waitForFlexPaymentRequired(url: string): Promise<void> {
             typeof requirement.network === "string" &&
             EXPECTED_SOLANA_NETWORKS.has(requirement.network) &&
             requirement.asset === SOLANA_USDC.address &&
-            amount === expectedAuthorizeAmount()
+            amount === scenario.expectedRequirementAmount
           );
         });
 
@@ -865,27 +1044,62 @@ async function main() {
   await waitFor(discoveryHealthUrl(), "discovery");
 
   const { authCookie, organizationId } = await login();
-  const walletId = await findDemoWalletId(organizationId, authCookie);
-  await assertWalletFunded(walletId, authCookie);
 
-  const tenant = await createFlexTenant(organizationId, authCookie, walletId);
-  await waitForTenantActive(organizationId, tenant.id, authCookie);
-  await createFlexTokenPrice(tenant.id, authCookie);
+  const tenant = EXISTING_FLEX_TENANT_ID
+    ? await waitForTenantActive(
+        organizationId,
+        EXISTING_FLEX_TENANT_ID,
+        authCookie,
+      )
+    : await (async () => {
+        const walletId = await findDemoWalletId(organizationId, authCookie);
+        await assertWalletFunded(walletId, authCookie);
+        return await createFlexTenant(organizationId, authCookie, walletId);
+      })();
+  if (EXISTING_FLEX_TENANT_ID) {
+    if (!tenant.wallet_id) {
+      throw new Error(
+        `Existing Flex tenant ${tenant.id} must have a funded wallet attached`,
+      );
+    }
+    await assertWalletFunded(tenant.wallet_id, authCookie);
+  }
+  if (!EXISTING_FLEX_TENANT_ID) {
+    await waitForTenantActive(organizationId, tenant.id, authCookie);
+    await createFlexTokenPrice(tenant.id, authCookie);
+  }
+  currentFlexProxyHost = proxyHostForTenant(tenant.name);
 
-  const facilitator = await loadSigner(FACILITATOR_KEYPAIR_PATH);
-  const endpoint = await importDynamicFlexEndpoint(
-    tenant.id,
-    authCookie,
-    facilitator.address,
-  );
-  const proxyUrl = proxyUrlFor(endpoint.path);
-  await waitForFlexPaymentRequired(proxyUrl);
+  const endpointsByPath = EXISTING_FLEX_TENANT_ID
+    ? await findScenarioEndpoints(tenant.id, authCookie)
+    : await (async () => {
+        const facilitator = await loadSigner(FACILITATOR_KEYPAIR_PATH);
+        const importedEndpoints = await importDynamicFlexEndpoint(
+          tenant.id,
+          authCookie,
+          facilitator.address,
+        );
+        for (const scenario of FLEX_PRICING_SCENARIOS) {
+          const endpoint = importedEndpoints.get(scenario.path);
+          if (!endpoint) {
+            throw new Error(`Missing imported endpoint for ${scenario.path}`);
+          }
+          if (scenario.pricingSource !== "api-update") {
+            continue;
+          }
+          await updatePricingRules(
+            tenant.id,
+            endpoint,
+            authCookie,
+            scenario.rules,
+          );
+        }
+        return importedEndpoints;
+      })();
 
   const initialTransactionCount = (await getTransactions(tenant.id, authCookie))
     .length;
   const flexEscrow = await createFlexEscrow();
-  let runError: unknown;
-  const cleanupErrors: unknown[] = [];
 
   try {
     const handler = createPaymentHandler({
@@ -902,24 +1116,54 @@ async function main() {
       initialRetryDelay: 500,
     });
 
-    const paidResponse = await fetchWithPayer(proxyUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: buildProxyBody(),
-    });
+    const scenarioResults: {
+      name: string;
+      endpointId: number;
+      expectedRequirementAmount: string;
+      expectedCaptureAmount: number;
+      paidTransactionId: number;
+      paidTransactionHash: string | null;
+    }[] = [];
 
-    if (!paidResponse.ok) {
-      const text = await paidResponse.text();
-      throw new Error(
-        `Expected paid Flex proxy call to succeed, got ${paidResponse.status}: ${text}`,
+    for (const scenario of FLEX_PRICING_SCENARIOS) {
+      const endpoint = endpointsByPath.get(scenario.path);
+      if (!endpoint) {
+        throw new Error(`Missing imported endpoint for ${scenario.path}`);
+      }
+
+      const proxyUrl = proxyUrlFor(endpoint.path);
+      await waitForFlexPaymentRequired(proxyUrl, scenario);
+
+      const paidResponse = await fetchWithPayer(proxyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: buildProxyBody(scenario),
+      });
+
+      if (!paidResponse.ok) {
+        const text = await paidResponse.text();
+        throw new Error(
+          `Expected paid Flex proxy call for ${scenario.name} to succeed, got ${paidResponse.status}: ${text}`,
+        );
+      }
+
+      const paidTransaction = await waitForPaidEndpointTransaction(
+        scenario.name,
+        tenant.id,
+        endpoint.id,
+        authCookie,
+        scenario.expectedCaptureAmount,
       );
-    }
 
-    const paidTransaction = await waitForPaidEndpointTransaction(
-      tenant.id,
-      endpoint.id,
-      authCookie,
-    );
+      scenarioResults.push({
+        name: scenario.name,
+        endpointId: endpoint.id,
+        expectedRequirementAmount: scenario.expectedRequirementAmount,
+        expectedCaptureAmount: scenario.expectedCaptureAmount,
+        paidTransactionId: paidTransaction.id,
+        paidTransactionHash: paidTransaction.tx_hash,
+      });
+    }
     const finalTransactionCount = (await getTransactions(tenant.id, authCookie))
       .length;
 
@@ -930,12 +1174,11 @@ async function main() {
           organizationId,
           tenantId: tenant.id,
           tenantName: tenant.name,
-          endpointId: endpoint.id,
+          scenarioCount: scenarioResults.length,
           initialTransactionCount,
           finalTransactionCount,
-          paidTransactionId: paidTransaction.id,
-          paidTransactionHash: paidTransaction.tx_hash,
-          proxyHost: FLEX_PROXY_HOST,
+          scenarios: scenarioResults,
+          proxyHost: currentFlexProxyHost,
           escrow: flexEscrow.escrowAddress,
         },
         null,
@@ -943,27 +1186,8 @@ async function main() {
       ),
     );
     process.stdout.write("\n");
-  } catch (err) {
-    runError = err;
   } finally {
-    try {
-      await cleanupFlexEscrow(flexEscrow);
-    } catch (err) {
-      cleanupErrors.push(err);
-    }
-
-    try {
-      await deleteFlexTenant(tenant.id, authCookie);
-    } catch (err) {
-      cleanupErrors.push(err);
-    }
-  }
-
-  if (runError || cleanupErrors.length > 0) {
-    throw new AggregateError(
-      [runError, ...cleanupErrors].filter((err) => err !== undefined),
-      "Local Flex smoke check failed",
-    );
+    await cleanupFlexEscrow(flexEscrow);
   }
 }
 
