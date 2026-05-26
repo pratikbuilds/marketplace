@@ -44,10 +44,6 @@ const pricingRuleType = type({
   capture: "string > 0",
 });
 
-export const PricingRulesPayloadSchema = type({
-  rules: pricingRuleType.array(),
-});
-
 const backendUrlType = type(
   `string > 0 & string <= ${MAX_BACKEND_URL_LENGTH}`,
 ).narrow((s, ctx) => {
@@ -119,6 +115,7 @@ export const UpdateTenantSchema = type({
   "upstream_auth_value?": `string <= ${MAX_AUTH_VALUE_LENGTH} | null`,
   "is_active?": "boolean",
   "tags?": tagsArrayType,
+  "pricing_rules?": pricingRuleType.array(),
 });
 
 export const CreateNodeSchema = type({
@@ -170,6 +167,7 @@ export const OrgUpdateTenantSchema = type({
   "upstream_auth_header?": `string <= ${MAX_AUTH_HEADER_LENGTH} | null`,
   "upstream_auth_value?": `string <= ${MAX_AUTH_VALUE_LENGTH} | null`,
   "is_active?": "boolean",
+  "pricing_rules?": pricingRuleType.array(),
 });
 
 export const AddMemberSchema = type({
@@ -222,6 +220,7 @@ export const AdminUpdateTenantSchema = type({
   "upstream_auth_value?": `string <= ${MAX_AUTH_VALUE_LENGTH} | null`,
   "org_slug?": adminOrgSlug,
   "tags?": tagsArrayType,
+  "pricing_rules?": pricingRuleType.array(),
 });
 
 export const AdminUpdateEndpointSchema = type({

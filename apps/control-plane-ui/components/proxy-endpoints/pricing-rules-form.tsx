@@ -48,6 +48,7 @@ interface PricingRulesFormProps {
   onRulesChange?: (rules: PricingRule[]) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onValidChange?: (valid: boolean) => void;
+  onSaveRules?: (rules: PricingRule[]) => void | Promise<void>;
   onSaved?: () => void | Promise<void>;
   showSaveButton?: boolean;
 }
@@ -61,6 +62,7 @@ export function PricingRulesForm({
   onRulesChange,
   onDirtyChange,
   onValidChange,
+  onSaveRules,
   onSaved,
   showSaveButton = true,
 }: PricingRulesFormProps) {
@@ -241,11 +243,10 @@ export function PricingRulesForm({
       const payloadRules = technicalDirty
         ? parseRulesJson(technicalJson)
         : generatedRules;
-      const rulesEndpoint =
-        mode === "tenant"
-          ? `/api/tenants/${tenantId}/pricing-rules`
-          : `/api/tenants/${tenantId}/endpoints/${endpointId}/pricing-rules`;
-      await api.put(rulesEndpoint, { rules: payloadRules });
+      if (!onSaveRules) {
+        throw new Error("Pricing rules save handler is not configured");
+      }
+      await onSaveRules(payloadRules);
       setRules(createFriendlyRulesFromPricingRules(payloadRules));
       setTechnicalJson(formatRulesJson(payloadRules));
       setTechnicalDirty(false);

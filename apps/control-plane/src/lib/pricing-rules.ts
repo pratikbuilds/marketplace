@@ -25,6 +25,9 @@ type DbExecutor = Kysely<Database> | Transaction<Database>;
 export type PricingRulesUpdateResult =
   | { ok: true; rules: PricingRule[]; updatedOperations: number }
   | { ok: false; error: string; status: 400 | 404 };
+export type TenantPricingRulesUpdateResult =
+  | { ok: true; rules: PricingRule[] }
+  | { ok: false; error: string; status: 400 | 404 };
 
 export type EndpointPricingTarget = {
   openapi_source_paths: string[] | null;
@@ -258,4 +261,37 @@ export async function applyEndpointPricingRules(
     .execute();
 
   return { ok: true, rules, updatedOperations };
+}
+
+export async function applyTenantPricingRules(
+  executor: DbExecutor,
+  tenantId: number,
+  rules: PricingRule[],
+): Promise<TenantPricingRulesUpdateResult> {
+  const tenant = await executor
+    .selectFrom("tenants")
+    .select(["id", "name", "openapi_spec"])
+    .where("id", "=", tenantId)
+    .executeTakeFirst();
+
+  if (!tenant) {
+    return { ok: false, error: "Tenant not found", status: 404 };
+  }
+
+  const spec =
+    getOpenApiSpec(tenant.openapi_spec) ?? createOpenApiSpec(tenant.name);
+  setPricingRules(spec, rules);
+
+  const validationError = validateSpecPricingRules(spec);
+  if (validationError) {
+    return { ok: false, error: validationError, status: 400 };
+  }
+
+  await executor
+    .updateTable("tenants")
+    .set({ openapi_spec: JSON.stringify(spec) })
+    .where("id", "=", tenantId)
+    .execute();
+
+  return { ok: true, rules };
 }

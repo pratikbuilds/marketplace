@@ -434,6 +434,9 @@ importers:
       arktype:
         specifier: 'catalog:'
         version: 2.2.0
+      bs58:
+        specifier: 'catalog:'
+        version: 6.0.0
       geist:
         specifier: ^1.5.1
         version: 1.7.0(next@15.5.15(@babel/core@7.29.0)(@opentelemetry/api@1.9.1)(react-dom@19.2.5(react@19.2.5))(react@19.2.5))

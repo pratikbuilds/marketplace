@@ -40,10 +40,13 @@ export function RootPricingRulesDialog({
               mode="tenant"
               scheme="flex"
               hasOpenApiLineage
-              onSaved={async () => {
+              onSaveRules={async (rules) => {
                 await api.put(defaultSchemeApiEndpoint, {
                   default_scheme: "flex",
+                  pricing_rules: rules,
                 });
+              }}
+              onSaved={() => {
                 onSaved();
                 onOpenChange(false);
               }}

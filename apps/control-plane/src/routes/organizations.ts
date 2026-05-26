@@ -54,6 +54,7 @@ import {
   getUsdPeggedSymbols,
 } from "../lib/token-seed.js";
 import {
+  applyTenantPricingRules,
   createOpenApiSpecWithRootPricingRules,
   validateSpecPricingRules,
 } from "../lib/pricing-rules.js";
@@ -653,12 +654,43 @@ organizationsRoutes.put(
       updateData.wallet_id = body.wallet_id;
     }
 
-    const result = await db
-      .updateTable("tenants")
-      .set(updateData)
-      .where("id", "=", tenantId)
-      .returningAll()
-      .executeTakeFirst();
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyTenantPricingRules(
+          trx,
+          tenantId,
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        const current = await trx
+          .selectFrom("tenants")
+          .selectAll()
+          .where("id", "=", tenantId)
+          .executeTakeFirst();
+        return { ok: true as const, tenant: current };
+      }
+
+      const result = await trx
+        .updateTable("tenants")
+        .set(updateData)
+        .where("id", "=", tenantId)
+        .returningAll()
+        .executeTakeFirst();
+
+      return { ok: true as const, tenant: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
+    }
+
+    const result = transactionResult.tenant;
 
     if (!result) {
       return c.json({ error: "Tenant not found" }, 404);

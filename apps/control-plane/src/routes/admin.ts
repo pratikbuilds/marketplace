@@ -34,6 +34,7 @@ import { validateProxyName } from "../lib/proxy-name.js";
 import { parsePagination } from "../lib/validation.js";
 import {
   applyEndpointPricingRules,
+  applyTenantPricingRules,
   createOpenApiSpecWithRootPricingRules,
   validateSpecPricingRules,
 } from "../lib/pricing-rules.js";
@@ -1127,21 +1128,43 @@ adminRoutes.put(
       }
     }
 
-    if (Object.keys(updateData).length === 0) {
-      const current = await db
-        .selectFrom("tenants")
-        .selectAll()
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyTenantPricingRules(
+          trx,
+          id,
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        const current = await trx
+          .selectFrom("tenants")
+          .selectAll()
+          .where("id", "=", id)
+          .executeTakeFirst();
+        return { ok: true as const, tenant: current };
+      }
+
+      const result = await trx
+        .updateTable("tenants")
+        .set(updateData)
         .where("id", "=", id)
+        .returningAll()
         .executeTakeFirst();
-      return c.json(current);
+
+      return { ok: true as const, tenant: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
     }
 
-    const result = await db
-      .updateTable("tenants")
-      .set(updateData)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    const result = transactionResult.tenant;
 
     if (!result) {
       return c.json({ error: "Tenant not found" }, 404);
@@ -1665,7 +1688,10 @@ adminRoutes.put(
         const pricingResult = await applyEndpointPricingRules(
           trx,
           tenantId,
-          endpoint,
+          {
+            openapi_source_paths: endpoint.openapi_source_paths,
+            http_method: body.http_method ?? endpoint.http_method,
+          },
           body.pricing_rules,
         );
         if (!pricingResult.ok) return pricingResult;

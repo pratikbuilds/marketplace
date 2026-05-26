@@ -545,28 +545,39 @@ await t.test("PUT /api/tenants/:id", async (t) => {
 
 await t.test("tenant root pricing rules", async (t) => {
   await t.test(
-    "member can update tenant-level Flex pricing rules",
+    "admin can update tenant-level Flex pricing rules through tenant update",
     async (t) => {
-      const { token, tenantId } = await createOrgMemberWithTenant("member");
+      const token = await createAdminUser();
+      const tenant = await db
+        .insertInto("tenants")
+        .values({
+          name: "pricing-rules-tenant",
+          backend_url: "http://backend.com",
+          default_price: 0.01,
+          default_scheme: "exact",
+          status: "active",
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
       const rules = [{ match: "$", capture: "10000" }];
 
-      const res = await app.request(`/api/tenants/${tenantId}/pricing-rules`, {
+      const res = await app.request(`/api/tenants/${tenant.id}`, {
         method: "PUT",
         headers: {
           Cookie: `auth_token=${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ rules }),
+        body: JSON.stringify({ pricing_rules: rules }),
       });
 
       t.equal(res.status, 200);
 
-      const tenant = await db
+      const updated = await db
         .selectFrom("tenants")
         .select("openapi_spec")
-        .where("id", "=", tenantId)
+        .where("id", "=", tenant.id)
         .executeTakeFirstOrThrow();
-      const spec = tenant.openapi_spec as Record<string, unknown>;
+      const spec = updated.openapi_spec as Record<string, unknown>;
       const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
       t.same(pricing.rules, rules);
     },

@@ -4,11 +4,7 @@ import { sql } from "kysely";
 import safe from "safe-regex2";
 import { arktypeValidator } from "@hono/arktype-validator";
 import { parsePagination } from "../lib/validation.js";
-import {
-  CreateEndpointSchema,
-  PricingRulesPayloadSchema,
-  UpdateEndpointSchema,
-} from "../lib/schemas.js";
+import { CreateEndpointSchema, UpdateEndpointSchema } from "../lib/schemas.js";
 import { syncToNode } from "../lib/sync.js";
 import { syncOpenApiSpec } from "../lib/openapi-sync.js";
 import { logger } from "../logger.js";
@@ -387,46 +383,6 @@ endpointsRoutes.get("/:id/pricing-rules", async (c) => {
     reason: "No OpenAPI operation found for this endpoint",
   });
 });
-
-endpointsRoutes.put(
-  "/:id/pricing-rules",
-  modifyResourceLimiter,
-  arktypeValidator("json", PricingRulesPayloadSchema),
-  async (c) => {
-    const tenantId = parseInt(c.req.param("tenantId") ?? "");
-    const id = parseInt(c.req.param("id"));
-    const body = c.req.valid("json");
-
-    const endpoint = await db
-      .selectFrom("endpoints")
-      .select(["id", "openapi_source_paths", "http_method"])
-      .where("id", "=", id)
-      .where("tenant_id", "=", tenantId)
-      .where("is_active", "=", true)
-      .executeTakeFirst();
-
-    if (!endpoint) {
-      return c.json({ error: "Endpoint not found" }, 404);
-    }
-
-    const pricingResult = await applyEndpointPricingRules(
-      db,
-      tenantId,
-      endpoint,
-      body.rules,
-    );
-    if (!pricingResult.ok) {
-      return c.json({ error: pricingResult.error }, pricingResult.status);
-    }
-
-    void syncTenantNodes(tenantId);
-
-    return c.json({
-      rules: pricingResult.rules,
-      updated_operations: pricingResult.updatedOperations,
-    });
-  },
-);
 
 endpointsRoutes.get("/:id/stats", async (c) => {
   const tenantId = parseInt(c.req.param("tenantId") ?? "");

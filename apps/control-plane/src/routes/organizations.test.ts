@@ -1822,6 +1822,53 @@ await t.test("PUT /api/organizations/:id/tenants/:tenantId", async (t) => {
     t.equal(data.wallet_id, wallet.id);
   });
 
+  await t.test("updates tenant root pricing rules", async (t) => {
+    const owner = await createUser("owner@example.com");
+    const org = await createOrg("Team", "team");
+    await addMember(owner.id, org.id, "owner");
+    const rules = [{ match: "$", capture: "10000" }];
+
+    const tenant = await db
+      .insertInto("tenants")
+      .values({
+        name: "pricing-rules-proxy",
+        backend_url: "http://backend.com",
+        organization_id: org.id,
+        default_price: 0.01,
+        default_scheme: "exact",
+        status: "active",
+        org_slug: "team",
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow();
+
+    const res = await app.request(
+      `/api/organizations/${org.id}/tenants/${tenant.id}`,
+      {
+        method: "PUT",
+        headers: {
+          Cookie: `auth_token=${owner.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          default_scheme: "flex",
+          pricing_rules: rules,
+        }),
+      },
+    );
+
+    t.equal(res.status, 200);
+
+    const updated = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", tenant.id)
+      .executeTakeFirstOrThrow();
+    const spec = updated.openapi_spec as Record<string, unknown>;
+    const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
+    t.same(pricing.rules, rules);
+  });
+
   await t.test("returns 404 for invalid wallet_id", async (t) => {
     const owner = await createUser("owner@example.com");
     const org = await createOrg("Team", "team");

@@ -1874,6 +1874,36 @@ await t.test("PUT /api/admin/tenants/:id", async (t) => {
     t.equal(data.backend_url, "http://new-backend.example.com");
   });
 
+  await t.test("updates tenant root pricing rules", async (t) => {
+    const admin = await createUser("admin@example.com", true);
+    const org = await createOrg("Team", "team");
+    const tenant = await createTenant(org.id, "my-tenant");
+    const rules = [{ match: "$", capture: "10000" }];
+
+    const res = await app.request(`/api/admin/tenants/${tenant.id}`, {
+      method: "PUT",
+      headers: {
+        Cookie: `auth_token=${admin.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        default_scheme: "flex",
+        pricing_rules: rules,
+      }),
+    });
+
+    t.equal(res.status, 200);
+
+    const updated = await db
+      .selectFrom("tenants")
+      .select("openapi_spec")
+      .where("id", "=", tenant.id)
+      .executeTakeFirstOrThrow();
+    const spec = updated.openapi_spec as Record<string, unknown>;
+    const pricing = spec["x-faremeter-pricing"] as Record<string, unknown>;
+    t.same(pricing.rules, rules);
+  });
+
   await t.test("returns 404 for non-existent tenant", async (t) => {
     const admin = await createUser("admin@example.com", true);
 
@@ -3098,6 +3128,78 @@ await t.test(
         | undefined;
       t.same(pricing?.rules, rules);
     });
+
+    await t.test(
+      "uses updated HTTP method when persisting endpoint pricing rules",
+      async (t) => {
+        const admin = await createUser("admin@example.com", true);
+        const org = await createOrg("Team", "team");
+        const tenant = await createTenant(org.id, "my-tenant");
+        const endpoint = await createEndpoint(tenant.id, "/v1/items");
+
+        await db
+          .updateTable("tenants")
+          .set({
+            openapi_spec: JSON.stringify({
+              openapi: "3.0.3",
+              info: { title: "API", version: "1.0.0" },
+              paths: {
+                "/v1/items": {
+                  get: { summary: "List items" },
+                  post: { summary: "Create item" },
+                },
+              },
+            }),
+          })
+          .where("id", "=", tenant.id)
+          .execute();
+
+        await db
+          .updateTable("endpoints")
+          .set({
+            openapi_source_paths: ["/v1/items"],
+            http_method: "POST",
+          })
+          .where("id", "=", endpoint.id)
+          .execute();
+
+        const rules = [{ match: "$", capture: "10000" }];
+
+        const res = await app.request(
+          `/api/admin/tenants/${tenant.id}/endpoints/${endpoint.id}`,
+          {
+            method: "PUT",
+            headers: {
+              Cookie: `auth_token=${admin.token}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              http_method: "GET",
+              pricing_rules: rules,
+            }),
+          },
+        );
+
+        t.equal(res.status, 200);
+
+        const updated = await db
+          .selectFrom("tenants")
+          .select("openapi_spec")
+          .where("id", "=", tenant.id)
+          .executeTakeFirstOrThrow();
+        const spec = updated.openapi_spec as {
+          paths: Record<string, Record<string, Record<string, unknown>>>;
+        };
+        const getPricing = spec.paths["/v1/items"]?.get?.[
+          "x-faremeter-pricing"
+        ] as Record<string, unknown> | undefined;
+        const postPricing = spec.paths["/v1/items"]?.post?.[
+          "x-faremeter-pricing"
+        ] as Record<string, unknown> | undefined;
+        t.same(getPricing?.rules, rules);
+        t.equal(postPricing, undefined);
+      },
+    );
 
     await t.test("returns 404 for non-existent endpoint", async (t) => {
       const admin = await createUser("admin@example.com", true);

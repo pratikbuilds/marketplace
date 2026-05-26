@@ -14,11 +14,9 @@ import { enqueueCertProvisioning } from "../lib/queue.js";
 import { validateProxyName } from "../lib/proxy-name.js";
 import { requireAdmin, requireTenantAccess } from "../middleware/auth.js";
 import { arktypeValidator } from "@hono/arktype-validator";
-import type { PricingRule } from "@faremeter/middleware-openapi";
 import {
   CreateTenantSchema,
   DEFAULT_TENANT_SCHEME,
-  PricingRulesPayloadSchema,
   UpdateTenantSchema,
   AssignNodeSchema,
 } from "../lib/schemas.js";
@@ -27,11 +25,9 @@ import {
   getUsdPeggedSymbols,
 } from "../lib/token-seed.js";
 import {
-  createOpenApiSpec,
+  applyTenantPricingRules,
   getOpenApiSpec,
   getPricingRulesFromObject,
-  setPricingRules,
-  validateSpecPricingRules,
 } from "../lib/pricing-rules.js";
 
 export const tenantsRoutes = new Hono();
@@ -186,12 +182,43 @@ tenantsRoutes.put(
       updateData.upstream_auth_value = body.upstream_auth_value;
     if (body.is_active !== undefined) updateData.is_active = body.is_active;
 
-    const result = await db
-      .updateTable("tenants")
-      .set(updateData)
-      .where("id", "=", id)
-      .returningAll()
-      .executeTakeFirst();
+    const transactionResult = await db.transaction().execute(async (trx) => {
+      if (body.pricing_rules !== undefined) {
+        const pricingResult = await applyTenantPricingRules(
+          trx,
+          id,
+          body.pricing_rules,
+        );
+        if (!pricingResult.ok) return pricingResult;
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        const current = await trx
+          .selectFrom("tenants")
+          .selectAll()
+          .where("id", "=", id)
+          .executeTakeFirst();
+        return { ok: true as const, tenant: current };
+      }
+
+      const result = await trx
+        .updateTable("tenants")
+        .set(updateData)
+        .where("id", "=", id)
+        .returningAll()
+        .executeTakeFirst();
+
+      return { ok: true as const, tenant: result };
+    });
+
+    if (!transactionResult.ok) {
+      return c.json(
+        { error: transactionResult.error },
+        transactionResult.status,
+      );
+    }
+
+    const result = transactionResult.tenant;
 
     if (!result) {
       return c.json({ error: "Tenant not found" }, 404);
@@ -244,52 +271,6 @@ tenantsRoutes.get("/:id/pricing-rules", async (c) => {
     editable: true,
   });
 });
-
-tenantsRoutes.put(
-  "/:id/pricing-rules",
-  arktypeValidator("json", PricingRulesPayloadSchema),
-  async (c) => {
-    const id = parseInt(c.req.param("id"));
-    const body = c.req.valid("json");
-
-    const tenant = await db
-      .selectFrom("tenants")
-      .select(["id", "name", "openapi_spec"])
-      .where("id", "=", id)
-      .executeTakeFirst();
-
-    if (!tenant) {
-      return c.json({ error: "Tenant not found" }, 404);
-    }
-
-    const spec =
-      getOpenApiSpec(tenant.openapi_spec) ?? createOpenApiSpec(tenant.name);
-    setPricingRules(spec, body.rules as PricingRule[]);
-
-    const validationError = validateSpecPricingRules(spec);
-    if (validationError) {
-      return c.json({ error: validationError }, 400);
-    }
-
-    await db
-      .updateTable("tenants")
-      .set({ openapi_spec: JSON.stringify(spec) })
-      .where("id", "=", id)
-      .execute();
-
-    const assignedNodes = await db
-      .selectFrom("tenant_nodes")
-      .select(["node_id"])
-      .where("tenant_id", "=", id)
-      .execute();
-
-    for (const { node_id } of assignedNodes) {
-      syncToNode(node_id).catch((err: unknown) => logger.error(String(err)));
-    }
-
-    return c.json({ rules: body.rules });
-  },
-);
 
 tenantsRoutes.delete("/:id", async (c) => {
   const memberRole = c.get("memberRole");
