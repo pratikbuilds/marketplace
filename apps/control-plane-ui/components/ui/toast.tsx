@@ -97,7 +97,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             </div>
           </Toast.Root>
         ))}
-        <Toast.Viewport className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-[480px] max-w-[calc(100vw-2rem)]" />
+        <Toast.Viewport className="fixed top-4 right-4 z-[80] flex flex-col gap-2 w-[480px] max-w-[calc(100vw-2rem)]" />
       </Toast.Provider>
     </ToastContext.Provider>
   );
