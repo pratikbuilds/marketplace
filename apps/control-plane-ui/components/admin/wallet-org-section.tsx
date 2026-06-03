@@ -7,6 +7,9 @@ interface WalletConfig {
     "mainnet-beta"?: {
       address: string;
     };
+    devnet?: {
+      address: string;
+    };
   };
   evm?: {
     base?: { address: string };

@@ -12,6 +12,7 @@ import {
 import { api } from "@/lib/api/client";
 import { useToast } from "@/components/ui/toast";
 import {
+  extractSolanaAddress,
   isValidSolanaAddress,
   isValidEvmAddress,
   buildAddressOnlyConfig,
@@ -20,6 +21,9 @@ import {
 interface WalletConfig {
   solana?: {
     "mainnet-beta"?: {
+      address: string;
+    };
+    devnet?: {
       address: string;
     };
   };
@@ -51,7 +55,7 @@ function extractAddresses(config: WalletConfig | null): {
 } {
   if (!config) return { solana: "", evm: "" };
   return {
-    solana: config.solana?.["mainnet-beta"]?.address ?? "",
+    solana: extractSolanaAddress(config) ?? "",
     evm: config.evm?.base?.address ?? "",
   };
 }

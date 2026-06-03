@@ -13,10 +13,14 @@ import { api } from "@/lib/api/client";
 import { useToast } from "@/components/ui/toast";
 import { InlineNameEdit } from "@/components/shared/inline-name-edit";
 import { AdminEditWalletDialog } from "./admin-edit-wallet-dialog";
+import { extractSolanaAddress } from "@/lib/wallet";
 
 interface WalletConfig {
   solana?: {
     "mainnet-beta"?: {
+      address: string;
+    };
+    devnet?: {
       address: string;
     };
   };
@@ -61,7 +65,7 @@ function extractAddresses(config: WalletConfig | null): {
 } {
   if (!config) return { solana: null, evm: null };
   return {
-    solana: config.solana?.["mainnet-beta"]?.address ?? null,
+    solana: extractSolanaAddress(config),
     evm: config.evm?.base?.address ?? null,
   };
 }
