@@ -5,6 +5,22 @@ import { base, polygon } from "viem/chains";
 import { evm, solana } from "@faremeter/info";
 import { logger } from "../logger.js";
 import { getSymbolToUsdRate } from "./jupiter-prices.js";
+import {
+  extractAddresses,
+  extractSolanaAddress,
+  getConfiguredSolanaCluster,
+  getSolanaRpcUrl,
+  type SupportedSolanaWalletCluster,
+  type WalletConfig,
+} from "./solana-wallet.js";
+
+export {
+  extractAddresses,
+  extractSolanaAddress,
+  getConfiguredSolanaCluster,
+  type SupportedSolanaWalletCluster,
+  type WalletConfig,
+};
 
 // @solana-program/token-2022 is 4MB for one constant — define inline
 const TOKEN_2022_PROGRAM_ADDRESS = address(
@@ -42,15 +58,13 @@ export async function withRetry<T>(
   throw lastError!;
 }
 
-const SOLANA_USDC = solana.lookupKnownSPLToken("mainnet-beta", "USDC");
+const SOLANA_CLUSTER = getConfiguredSolanaCluster();
+const SOLANA_USDC = solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDC");
 const BASE_USDC = evm.lookupKnownAsset("base", "USDC");
 const POLYGON_USDC = evm.lookupKnownAsset("eip155:137", "USDC");
 const MONAD_USDC = evm.lookupKnownAsset("eip155:143", "USDC");
 
-const SOLANA_RPC_URL =
-  process.env.SOLANA_RPC_URL ?? "https://api.mainnet-beta.solana.com";
-
-const solanaRpc = createSolanaRpc(SOLANA_RPC_URL);
+const solanaRpc = createSolanaRpc(getSolanaRpcUrl());
 
 const monad = {
   id: 143,
@@ -99,7 +113,7 @@ const SOLANA_STABLECOIN_SYMBOLS = [
 ] as const;
 
 for (const symbol of SOLANA_STABLECOIN_SYMBOLS) {
-  const info = solana.lookupKnownSPLToken("mainnet-beta", symbol);
+  const info = solana.lookupKnownSPLToken(SOLANA_CLUSTER, symbol);
   if (info) KNOWN_SOLANA_MINTS.set(info.address, symbol);
 }
 
@@ -284,32 +298,6 @@ export async function fetchWalletBalances(addresses: {
 }
 
 export const BALANCE_CACHE_TTL_MS = 60 * 1000; // 1 minute
-
-export interface WalletConfig {
-  solana?: {
-    "mainnet-beta"?: { address?: string; key?: string };
-    devnet?: { address?: string; key?: string };
-  };
-  evm?: {
-    base?: { address?: string; key?: string };
-    polygon?: { address?: string; key?: string };
-    monad?: { address?: string; key?: string };
-  };
-}
-
-export function extractAddresses(config: WalletConfig | null): {
-  solana: string | null;
-  evm: string | null;
-} {
-  if (!config) return { solana: null, evm: null };
-  return {
-    solana:
-      config.solana?.["mainnet-beta"]?.address ??
-      config.solana?.devnet?.address ??
-      null,
-    evm: config.evm?.base?.address ?? null,
-  };
-}
 
 export function checkBalancesMeetMinimum(
   balances: WalletBalances | null,

@@ -12,8 +12,8 @@ import {
   checkBalancesMeetMinimum,
   BALANCE_CACHE_TTL_MS,
   type WalletBalances,
-  type WalletConfig,
 } from "../lib/balances.js";
+import { getWalletAddresses, type WalletConfig } from "../lib/solana-wallet.js";
 import { logger } from "../logger.js";
 import { syncToNode } from "../lib/sync.js";
 import { createHealthCheck, upsertNodeDnsRecord } from "../lib/dns.js";
@@ -725,12 +725,7 @@ organizationsRoutes.put(
       }
 
       if (newWalletConfig) {
-        const addresses = {
-          solana: newWalletConfig.solana?.["mainnet-beta"]?.address,
-          base: newWalletConfig.evm?.base?.address,
-          polygon: newWalletConfig.evm?.polygon?.address,
-          monad: newWalletConfig.evm?.monad?.address,
-        };
+        const addresses = getWalletAddresses(newWalletConfig);
 
         updateAccountAddresses(tenant.name, addresses).catch((err: unknown) =>
           logger.error(
@@ -902,12 +897,7 @@ organizationsRoutes.post(
     const walletConfig = tenant.wallet_config as WalletConfig | null;
     if (walletConfig) {
       const accessToken = Math.random().toString(36).substring(2, 7);
-      const addresses = {
-        solana: walletConfig.solana?.["mainnet-beta"]?.address,
-        base: walletConfig.evm?.base?.address,
-        polygon: walletConfig.evm?.polygon?.address,
-        monad: walletConfig.evm?.monad?.address,
-      };
+      const addresses = getWalletAddresses(walletConfig);
 
       setupAccountWithAddresses(tenant.name, accessToken, addresses).catch(
         (err: unknown) =>
@@ -1359,12 +1349,7 @@ organizationsRoutes.post(
       const walletConfig = wallet.wallet_config as WalletConfig | null;
       if (walletConfig) {
         const accessToken = Math.random().toString(36).substring(2, 7);
-        const addresses = {
-          solana: walletConfig.solana?.["mainnet-beta"]?.address,
-          base: walletConfig.evm?.base?.address,
-          polygon: walletConfig.evm?.polygon?.address,
-          monad: walletConfig.evm?.monad?.address,
-        };
+        const addresses = getWalletAddresses(walletConfig);
 
         setupAccountWithAddresses(tenant.name, accessToken, addresses).catch(
           (err: unknown) =>

@@ -1,6 +1,7 @@
 import t from "tap";
 import {
   extractAddresses,
+  extractSolanaAddress,
   checkBalancesMeetMinimum,
   withRetry,
   BALANCE_CACHE_TTL_MS,
@@ -23,7 +24,7 @@ await t.test("extractAddresses", async (t) => {
     t.same(result, { solana: null, evm: null });
   });
 
-  await t.test("extracts solana address", async (t) => {
+  await t.test("ignores mainnet solana address by default", async (t) => {
     const config: WalletConfig = {
       solana: {
         "mainnet-beta": {
@@ -33,7 +34,7 @@ await t.test("extractAddresses", async (t) => {
       },
     };
     const result = extractAddresses(config);
-    t.equal(result.solana, "sol-address-123");
+    t.equal(result.solana, null);
     t.equal(result.evm, null);
   });
 
@@ -49,6 +50,57 @@ await t.test("extractAddresses", async (t) => {
     const result = extractAddresses(config);
     t.equal(result.solana, "devnet-sol-address");
     t.equal(result.evm, null);
+  });
+
+  await t.test("prefers configured solana cluster address", async (t) => {
+    const config: WalletConfig = {
+      solana: {
+        "mainnet-beta": {
+          address: "mainnet-sol-address",
+        },
+        devnet: {
+          address: "devnet-sol-address",
+        },
+      },
+    };
+
+    t.equal(
+      extractSolanaAddress(config, "devnet"),
+      "devnet-sol-address",
+      "devnet config should choose the devnet address",
+    );
+    t.equal(
+      extractSolanaAddress(config, "mainnet-beta"),
+      "mainnet-sol-address",
+      "mainnet config should choose the mainnet address",
+    );
+  });
+
+  await t.test("prefers devnet address by default", async (t) => {
+    const config: WalletConfig = {
+      solana: {
+        "mainnet-beta": {
+          address: "mainnet-sol-address",
+        },
+        devnet: {
+          address: "devnet-sol-address",
+        },
+      },
+    };
+
+    t.equal(extractSolanaAddress(config), "devnet-sol-address");
+  });
+
+  await t.test("does not fall back to the other solana cluster", async (t) => {
+    const config: WalletConfig = {
+      solana: {
+        devnet: {
+          address: "devnet-sol-address",
+        },
+      },
+    };
+
+    t.equal(extractSolanaAddress(config, "mainnet-beta"), null);
   });
 
   await t.test("extracts evm address from base", async (t) => {
@@ -68,7 +120,7 @@ await t.test("extractAddresses", async (t) => {
   await t.test("extracts both addresses", async (t) => {
     const config: WalletConfig = {
       solana: {
-        "mainnet-beta": {
+        devnet: {
           address: "sol-address",
         },
       },
