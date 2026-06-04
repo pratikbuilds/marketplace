@@ -16,7 +16,7 @@ export function getConfiguredSolanaCluster(
   rawCluster = process.env.SOLANA_NETWORK,
 ): SupportedSolanaWalletCluster {
   if (rawCluster === undefined) {
-    return "devnet";
+    return "mainnet-beta";
   }
   if (rawCluster === "mainnet-beta" || rawCluster === "devnet") {
     return rawCluster;

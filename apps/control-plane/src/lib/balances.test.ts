@@ -24,7 +24,7 @@ await t.test("extractAddresses", async (t) => {
     t.same(result, { solana: null, evm: null });
   });
 
-  await t.test("ignores mainnet solana address by default", async (t) => {
+  await t.test("extracts mainnet solana address by default", async (t) => {
     const config: WalletConfig = {
       solana: {
         "mainnet-beta": {
@@ -34,11 +34,11 @@ await t.test("extractAddresses", async (t) => {
       },
     };
     const result = extractAddresses(config);
-    t.equal(result.solana, null);
+    t.equal(result.solana, "sol-address-123");
     t.equal(result.evm, null);
   });
 
-  await t.test("extracts solana devnet address", async (t) => {
+  await t.test("ignores devnet solana address by default", async (t) => {
     const config: WalletConfig = {
       solana: {
         devnet: {
@@ -48,7 +48,7 @@ await t.test("extractAddresses", async (t) => {
       },
     };
     const result = extractAddresses(config);
-    t.equal(result.solana, "devnet-sol-address");
+    t.equal(result.solana, null);
     t.equal(result.evm, null);
   });
 
@@ -76,7 +76,7 @@ await t.test("extractAddresses", async (t) => {
     );
   });
 
-  await t.test("prefers devnet address by default", async (t) => {
+  await t.test("prefers mainnet address by default", async (t) => {
     const config: WalletConfig = {
       solana: {
         "mainnet-beta": {
@@ -88,7 +88,7 @@ await t.test("extractAddresses", async (t) => {
       },
     };
 
-    t.equal(extractSolanaAddress(config), "devnet-sol-address");
+    t.equal(extractSolanaAddress(config), "mainnet-sol-address");
   });
 
   await t.test("does not fall back to the other solana cluster", async (t) => {
@@ -120,7 +120,7 @@ await t.test("extractAddresses", async (t) => {
   await t.test("extracts both addresses", async (t) => {
     const config: WalletConfig = {
       solana: {
-        devnet: {
+        "mainnet-beta": {
           address: "sol-address",
         },
       },

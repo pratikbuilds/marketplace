@@ -104,8 +104,8 @@ solana-keygen new --outfile keypairs/facilitator.json
 `LOCAL_SERVICE_SOLANA_ADDRESS` is optional. If unset, the seed script derives
 the receiver wallet address from `keypairs/facilitator.json`.
 
-The local stack supports both Solana devnet and mainnet-beta. Devnet is the
-default when `SOLANA_NETWORK` is unset:
+The local stack supports both Solana devnet and mainnet-beta. Docker Compose
+explicitly defaults local services to devnet when `SOLANA_NETWORK` is unset:
 
 ```text
 SOLANA_NETWORK=devnet

@@ -8,7 +8,7 @@ import {
 } from "./solana-wallet.js";
 
 await t.test("getConfiguredSolanaCluster", async (t) => {
-  t.equal(getConfiguredSolanaCluster(undefined), "devnet");
+  t.equal(getConfiguredSolanaCluster(undefined), "mainnet-beta");
   t.equal(getConfiguredSolanaCluster("devnet"), "devnet");
   t.equal(getConfiguredSolanaCluster("mainnet-beta"), "mainnet-beta");
   t.throws(
@@ -37,9 +37,9 @@ await t.test("extractSolanaAddress", async (t) => {
   t.equal(extractSolanaAddress(config, "mainnet-beta"), "mainnet-sol-address");
   t.equal(
     extractSolanaAddress({
-      solana: { devnet: { address: "devnet-sol-address" } },
+      solana: { "mainnet-beta": { address: "mainnet-sol-address" } },
     }),
-    "devnet-sol-address",
+    "mainnet-sol-address",
   );
   t.equal(
     extractSolanaAddress(
@@ -53,7 +53,7 @@ await t.test("extractSolanaAddress", async (t) => {
 await t.test("getWalletAddresses", async (t) => {
   const config: WalletConfig = {
     solana: {
-      devnet: { address: "devnet-sol-address" },
+      "mainnet-beta": { address: "mainnet-sol-address" },
     },
     evm: {
       base: { address: "0xbase" },
@@ -63,7 +63,7 @@ await t.test("getWalletAddresses", async (t) => {
   };
 
   t.same(getWalletAddresses(config), {
-    solana: "devnet-sol-address",
+    solana: "mainnet-sol-address",
     base: "0xbase",
     polygon: "0xpolygon",
     monad: "0xmonad",

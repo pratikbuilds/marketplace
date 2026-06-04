@@ -33,7 +33,7 @@ export type SupportedSolanaWalletCluster = "mainnet-beta" | "devnet";
 export function getConfiguredSolanaCluster(): SupportedSolanaWalletCluster {
   const rawCluster = process.env.NEXT_PUBLIC_SOLANA_NETWORK;
   if (rawCluster === undefined) {
-    return "devnet";
+    return "mainnet-beta";
   }
   if (rawCluster === "mainnet-beta" || rawCluster === "devnet") {
     return rawCluster;
