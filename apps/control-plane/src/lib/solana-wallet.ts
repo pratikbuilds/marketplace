@@ -1,4 +1,5 @@
 export type SupportedSolanaWalletCluster = "mainnet-beta" | "devnet";
+export type FaremeterDashSolanaChain = "solana" | "solana-devnet";
 
 export interface WalletConfig {
   solana?: {
@@ -36,6 +37,12 @@ export function getDefaultSolanaRpcUrl(
 
 export function getSolanaRpcUrl(): string {
   return process.env.SOLANA_RPC_URL ?? getDefaultSolanaRpcUrl();
+}
+
+export function getFaremeterDashSolanaChain(
+  cluster = getConfiguredSolanaCluster(),
+): FaremeterDashSolanaChain {
+  return cluster === "devnet" ? "solana-devnet" : "solana";
 }
 
 export function extractSolanaAddress(

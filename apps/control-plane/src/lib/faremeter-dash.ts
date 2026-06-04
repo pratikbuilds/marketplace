@@ -1,8 +1,12 @@
 import { logger } from "../logger.js";
 import { evm, solana } from "@faremeter/info";
-import { getConfiguredSolanaCluster } from "./solana-wallet.js";
+import {
+  getConfiguredSolanaCluster,
+  getFaremeterDashSolanaChain,
+} from "./solana-wallet.js";
 
 const SOLANA_CLUSTER = getConfiguredSolanaCluster();
+const SOLANA_DASH_CHAIN = getFaremeterDashSolanaChain(SOLANA_CLUSTER);
 
 // Known stablecoin addresses for filtering transactions.
 // Includes EURC for transaction display even though it's excluded from migration seeding
@@ -266,7 +270,7 @@ export async function setupAccountWithAddresses(
 
   if (addresses.solana) {
     trackingPromises.push(
-      createTrackedAddress(account.id, "solana", addresses.solana),
+      createTrackedAddress(account.id, SOLANA_DASH_CHAIN, addresses.solana),
     );
   }
 
@@ -317,7 +321,7 @@ export async function updateAccountAddresses(
 
   if (addresses.solana) {
     trackingPromises.push(
-      createTrackedAddress(account.id, "solana", addresses.solana),
+      createTrackedAddress(account.id, SOLANA_DASH_CHAIN, addresses.solana),
     );
   }
 
