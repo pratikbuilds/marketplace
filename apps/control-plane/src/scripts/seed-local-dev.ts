@@ -19,12 +19,14 @@ const ADMIN_PASSWORD = process.env.LOCAL_ADMIN_PASSWORD ?? "localdev123";
 const ORG_NAME = "Local Dev Org";
 const ORG_SLUG = "local";
 const WALLET_NAME = "Local Dev Wallet";
-const DEMO_TENANT_NAME = "demo-api";
+const EXACT_TENANT_NAME = "demo-api";
+const FLEX_TENANT_NAME = "demo-flex-api";
 const DEMO_BACKEND_URL =
   process.env.LOCAL_PUBLISHER_URL ?? "http://publisher-mock:3001";
 const DEMO_PRICE = parseInt(process.env.LOCAL_DEMO_PRICE ?? "1000", 10);
-const DEMO_ENDPOINT_MULTIPLIER = 1;
-const DEMO_PROXY_DOMAIN = `${DEMO_TENANT_NAME}.${ORG_SLUG}.${process.env.PROXY_BASE_DOMAIN ?? "proxy.localhost"}`;
+const PROXY_BASE_DOMAIN = process.env.PROXY_BASE_DOMAIN ?? "proxy.localhost";
+const EXACT_PROXY_DOMAIN = `${EXACT_TENANT_NAME}.${ORG_SLUG}.${PROXY_BASE_DOMAIN}`;
+const FLEX_PROXY_DOMAIN = `${FLEX_TENANT_NAME}.${ORG_SLUG}.${PROXY_BASE_DOMAIN}`;
 const PRIMARY_PROXY_PORT = process.env.PROXY_BASE_PORT ?? "18080";
 const SECONDARY_PROXY_PORT = process.env.LOCAL_SECONDARY_PROXY_PORT ?? "18081";
 
@@ -89,6 +91,11 @@ type CreatedWallet = {
 type CreatedTenant = {
   id: number;
   status: string;
+};
+
+type SeedEndpoint = {
+  id: number;
+  path: string | null;
 };
 
 function getServiceWalletAddress(): string {
@@ -178,7 +185,10 @@ async function waitForTenantActive(tenantId: number): Promise<void> {
   throw new Error(`Tenant ${tenantId} did not become active in time`);
 }
 
-async function waitForProxyPaymentRequired(internalIp: string): Promise<void> {
+async function waitForProxyPaymentRequired(
+  internalIp: string,
+  proxyDomain: string,
+): Promise<void> {
   const deadline = Date.now() + 60_000;
   let lastError: unknown;
   const body = JSON.stringify({
@@ -195,7 +205,7 @@ async function waitForProxyPaymentRequired(internalIp: string): Promise<void> {
           path: "/v1/chat/completions",
           method: "POST",
           headers: {
-            Host: DEMO_PROXY_DOMAIN,
+            Host: proxyDomain,
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(body),
           },
@@ -433,14 +443,14 @@ async function ensureLocalFundingSettings() {
 }
 
 async function cleanupDemoData(organizationId: number, nodeIds: number[]) {
-  const existingTenant = await db
+  const existingTenants = await db
     .selectFrom("tenants")
     .select(["id"])
     .where("organization_id", "=", organizationId)
-    .where("name", "=", DEMO_TENANT_NAME)
-    .executeTakeFirst();
+    .where("name", "in", [EXACT_TENANT_NAME, FLEX_TENANT_NAME])
+    .execute();
 
-  if (existingTenant) {
+  for (const existingTenant of existingTenants) {
     await db
       .deleteFrom("transactions")
       .where("tenant_id", "=", existingTenant.id)
@@ -559,6 +569,8 @@ async function createTenant(
   organizationId: number,
   authCookie: string,
   walletId: number,
+  name: string,
+  defaultScheme: "exact" | "flex",
 ): Promise<CreatedTenant> {
   return await apiJson<CreatedTenant>(
     `/api/organizations/${organizationId}/tenants`,
@@ -566,29 +578,82 @@ async function createTenant(
       method: "POST",
       cookie: authCookie,
       body: JSON.stringify({
-        name: DEMO_TENANT_NAME,
+        name,
         backend_url: DEMO_BACKEND_URL,
         wallet_id: walletId,
         default_price: DEMO_PRICE,
-        default_scheme: "exact",
+        default_scheme: defaultScheme,
       }),
     },
   );
 }
 
-async function createEndpoint(tenantId: number, authCookie: string) {
+async function createExactEndpoint(tenantId: number, authCookie: string) {
   await apiJson(`/api/tenants/${tenantId}/endpoints`, {
     method: "POST",
     cookie: authCookie,
     body: JSON.stringify({
       path: "/v1/chat/completions",
-      price: DEMO_ENDPOINT_MULTIPLIER,
+      price: 1,
       scheme: "exact",
       http_method: "POST",
-      description: "Paid demo route",
+      description: "Exact paid demo route",
       priority: 10,
     }),
   });
+}
+
+async function getPublisherOpenApiSpec(): Promise<object> {
+  const response = await fetch(`${DEMO_BACKEND_URL}/openapi.json`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Publisher OpenAPI fetch failed: ${response.status} ${text}`,
+    );
+  }
+
+  const spec: unknown = await response.json();
+  if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+    throw new Error("Publisher OpenAPI schema must be a JSON object");
+  }
+
+  return spec;
+}
+
+async function importPublisherOpenApiSpec(
+  tenantId: number,
+  authCookie: string,
+) {
+  const spec = await getPublisherOpenApiSpec();
+
+  await apiJson(`/api/tenants/${tenantId}/openapi/import`, {
+    method: "POST",
+    cookie: authCookie,
+    body: JSON.stringify({
+      spec,
+    }),
+  });
+
+  const endpoints = await apiJson<SeedEndpoint[]>(
+    `/api/tenants/${tenantId}/endpoints`,
+    {
+      cookie: authCookie,
+    },
+  );
+
+  const publisherPaths = new Set(["/v1/chat/completions"]);
+  for (const endpoint of endpoints) {
+    if (!endpoint.path || !publisherPaths.has(endpoint.path)) continue;
+
+    await apiJson(`/api/tenants/${tenantId}/endpoints/${endpoint.id}`, {
+      method: "PUT",
+      cookie: authCookie,
+      body: JSON.stringify({
+        http_method: "POST",
+        priority: 10,
+      }),
+    });
+  }
 }
 
 async function useOnlyLocalSolanaUsdc(tenantId: number) {
@@ -651,31 +716,53 @@ async function main() {
   await enqueueBalanceCheck(wallet.id, null);
   await waitForWalletFunded(wallet.id);
 
-  const tenant = await createTenant(organization.id, authCookie, wallet.id);
-  await useOnlyLocalSolanaUsdc(tenant.id);
-  await createEndpoint(tenant.id, authCookie);
+  const exactTenant = await createTenant(
+    organization.id,
+    authCookie,
+    wallet.id,
+    EXACT_TENANT_NAME,
+    "exact",
+  );
+  await useOnlyLocalSolanaUsdc(exactTenant.id);
+  await createExactEndpoint(exactTenant.id, authCookie);
+
+  const flexTenant = await createTenant(
+    organization.id,
+    authCookie,
+    wallet.id,
+    FLEX_TENANT_NAME,
+    "flex",
+  );
+  await useOnlyLocalSolanaUsdc(flexTenant.id);
+  await importPublisherOpenApiSpec(flexTenant.id, authCookie);
 
   // Keep local bootstrap deterministic even if the queue is still starting.
-  await triggerCertProvisioning(
-    nodes.map((node) => node.id),
-    toDomainInfo({
-      name: DEMO_TENANT_NAME,
-      org_slug: organization.slug,
-    }),
-  );
+  for (const name of [EXACT_TENANT_NAME, FLEX_TENANT_NAME]) {
+    await triggerCertProvisioning(
+      nodes.map((node) => node.id),
+      toDomainInfo({
+        name,
+        org_slug: organization.slug,
+      }),
+    );
+  }
 
-  await waitForTenantActive(tenant.id);
+  await waitForTenantActive(exactTenant.id);
+  await waitForTenantActive(flexTenant.id);
 
   for (const node of nodes) {
     await syncToNode(node.id);
-    await waitForProxyPaymentRequired(node.internalIp);
+    await waitForProxyPaymentRequired(node.internalIp, EXACT_PROXY_DOMAIN);
+    await waitForProxyPaymentRequired(node.internalIp, FLEX_PROXY_DOMAIN);
   }
 
   logger.info(
     `Local developer stack ready.
 Admin login: ${ADMIN_EMAIL} / ${ADMIN_PASSWORD}
-Demo proxy node A: http://${DEMO_PROXY_DOMAIN}:${PRIMARY_PROXY_PORT}/v1/chat/completions
-Demo proxy node B: http://${DEMO_PROXY_DOMAIN}:${SECONDARY_PROXY_PORT}/v1/chat/completions`,
+Exact proxy node A: http://${EXACT_PROXY_DOMAIN}:${PRIMARY_PROXY_PORT}/v1/chat/completions
+Exact proxy node B: http://${EXACT_PROXY_DOMAIN}:${SECONDARY_PROXY_PORT}/v1/chat/completions
+Flex proxy node A: http://${FLEX_PROXY_DOMAIN}:${PRIMARY_PROXY_PORT}/v1/chat/completions
+Flex proxy node B: http://${FLEX_PROXY_DOMAIN}:${SECONDARY_PROXY_PORT}/v1/chat/completions`,
   );
 }
 
