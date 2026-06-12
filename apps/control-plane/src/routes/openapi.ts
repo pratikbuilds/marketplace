@@ -15,7 +15,12 @@ import {
   ValidatePatternSchema,
   OpenApiExtensionsSchema,
 } from "../lib/schemas.js";
-import { getOpenApiSpec, isRecord } from "../lib/pricing-rules.js";
+import {
+  getOpenApiSpec,
+  getPricingRulesFromObject,
+  isRecord,
+  methodCandidates,
+} from "../lib/pricing-rules.js";
 
 export const openapiRoutes = new Hono();
 
@@ -190,6 +195,42 @@ function isValidRegex(pattern: string): boolean {
   } catch {
     return false;
   }
+}
+
+function endpointMethods(httpMethod: string | null): readonly string[] {
+  const methods = methodCandidates(httpMethod);
+  if (methods.length > 0) {
+    return methods;
+  }
+
+  const method = httpMethod?.toLowerCase();
+  return method === "head" || method === "options" ? [method] : [];
+}
+
+function hasPricingRules(value: unknown): boolean {
+  return getPricingRulesFromObject(value) !== null;
+}
+
+function hasEffectivePricingRules(
+  spec: OpenApiSpec,
+  path: string,
+  httpMethod: string | null,
+): boolean {
+  if (hasPricingRules(spec)) {
+    return true;
+  }
+
+  const pathItem = spec.paths?.[path];
+  if (!isRecord(pathItem)) {
+    return false;
+  }
+  if (hasPricingRules(pathItem)) {
+    return true;
+  }
+
+  return endpointMethods(httpMethod).some((method) =>
+    hasPricingRules(pathItem[method]),
+  );
 }
 
 openapiRoutes.get("/spec", async (c) => {
@@ -390,8 +431,9 @@ openapiRoutes.get("/export", async (c) => {
     .execute();
 
   let baseSpec: OpenApiSpec;
-  if (tenant.openapi_spec) {
-    baseSpec = tenant.openapi_spec as OpenApiSpec;
+  const storedSpec = getOpenApiSpec(tenant.openapi_spec);
+  if (storedSpec) {
+    baseSpec = storedSpec as OpenApiSpec;
   } else {
     baseSpec = {
       openapi: "3.0.3",
@@ -403,10 +445,8 @@ openapiRoutes.get("/export", async (c) => {
     };
   }
 
-  const exportedSpec: OpenApiSpec = {
-    ...baseSpec,
-    paths: { ...baseSpec.paths },
-  };
+  const exportedSpec: OpenApiSpec = structuredClone(baseSpec);
+  exportedSpec.paths ??= {};
 
   const warnings: string[] = [];
   const orphanEndpoints: { pattern: string; description: string | null }[] = [];
@@ -415,7 +455,7 @@ openapiRoutes.get("/export", async (c) => {
     const sourcePaths = endpoint.openapi_source_paths;
 
     if (sourcePaths && sourcePaths.length > 0) {
-      // Has lineage - add pricing extension to each source path
+      // Has lineage - preserve advanced pricing or add fixed fallback pricing.
       for (const sourcePath of sourcePaths) {
         exportedSpec.paths ??= {};
         exportedSpec.paths[sourcePath] ??= {};
@@ -429,10 +469,14 @@ openapiRoutes.get("/export", async (c) => {
           pathObj.description = endpoint.description;
         }
 
-        pathObj["x-faremeter-pricing"] = {
-          price: endpoint.price ?? tenant.default_price,
-          scheme: endpoint.scheme ?? tenant.default_scheme,
-        };
+        if (
+          !hasEffectivePricingRules(baseSpec, sourcePath, endpoint.http_method)
+        ) {
+          pathObj["x-faremeter-pricing"] = {
+            price: endpoint.price ?? tenant.default_price,
+            scheme: endpoint.scheme ?? tenant.default_scheme,
+          };
+        }
 
         const tags = endpoint.tags as string[] | null;
         if (tags && tags.length > 0) {
