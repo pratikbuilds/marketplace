@@ -45,6 +45,12 @@ export function getFaremeterDashSolanaChain(
   return cluster === "devnet" ? "solana-devnet" : "solana";
 }
 
+export function getSolanaPaymentNetwork(
+  cluster = getConfiguredSolanaCluster(),
+) {
+  return cluster === "devnet" ? "solana-devnet" : "solana-mainnet-beta";
+}
+
 export function extractSolanaAddress(
   config: WalletConfig | null,
   preferredCluster = getConfiguredSolanaCluster(),

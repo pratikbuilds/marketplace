@@ -4,6 +4,7 @@ import {
   getConfiguredSolanaCluster,
   getDefaultSolanaRpcUrl,
   getFaremeterDashSolanaChain,
+  getSolanaPaymentNetwork,
   getWalletAddresses,
   type WalletConfig,
 } from "./solana-wallet.js";
@@ -29,6 +30,11 @@ await t.test("getDefaultSolanaRpcUrl", async (t) => {
 await t.test("getFaremeterDashSolanaChain", async (t) => {
   t.equal(getFaremeterDashSolanaChain("mainnet-beta"), "solana");
   t.equal(getFaremeterDashSolanaChain("devnet"), "solana-devnet");
+});
+
+await t.test("getSolanaPaymentNetwork", async (t) => {
+  t.equal(getSolanaPaymentNetwork("mainnet-beta"), "solana-mainnet-beta");
+  t.equal(getSolanaPaymentNetwork("devnet"), "solana-devnet");
 });
 
 await t.test("extractSolanaAddress", async (t) => {

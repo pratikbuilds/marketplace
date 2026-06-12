@@ -1,5 +1,22 @@
 import type { Kysely } from "kysely";
 import type { Database } from "../db/schema.js";
+import { getSolanaPaymentNetwork } from "./solana-wallet.js";
+
+const SOLANA_NETWORKS = new Set(["solana-mainnet-beta", "solana-devnet"]);
+
+type SupportedTokenSeed = {
+  symbol: string;
+  mint_address: string;
+  network: string;
+};
+
+function shouldSeedSupportedToken(token: SupportedTokenSeed): boolean {
+  if (!SOLANA_NETWORKS.has(token.network)) {
+    return true;
+  }
+
+  return token.network === getSolanaPaymentNetwork();
+}
 
 export async function seedTokenPricesForTenant(
   db: Kysely<Database>,
@@ -15,9 +32,11 @@ export async function seedTokenPricesForTenant(
     .where("is_usd_pegged", "=", true)
     .execute();
 
-  if (tokens.length === 0) return;
+  const seedTokens = tokens.filter(shouldSeedSupportedToken);
 
-  const values = tokens.map((t) => ({
+  if (seedTokens.length === 0) return;
+
+  const values = seedTokens.map((t) => ({
     tenant_id: tenantId,
     endpoint_id: endpointId ?? null,
     token_symbol: t.symbol,
