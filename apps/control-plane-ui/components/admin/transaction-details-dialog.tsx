@@ -35,6 +35,8 @@ function getExplorerUrl(network: string | null, txHash: string): string {
     case "solana":
     case "solana-mainnet-beta":
       return `https://solscan.io/tx/${txHash}`;
+    case "solana-devnet":
+      return `https://solscan.io/tx/${txHash}?cluster=devnet`;
     case "base":
       return `https://basescan.org/tx/${txHash}`;
     case "polygon":

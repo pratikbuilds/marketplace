@@ -11,6 +11,11 @@ import {
 } from "../lib/crypto.js";
 import { fetchWalletBalances } from "../lib/balances.js";
 import {
+  extractAddresses,
+  getWalletAddresses,
+  type WalletConfig,
+} from "../lib/solana-wallet.js";
+import {
   createHealthCheck,
   upsertNodeDnsRecord,
   deleteHealthCheck,
@@ -899,12 +904,7 @@ adminRoutes.post(
       if (wallet?.wallet_config) {
         const config = wallet.wallet_config as WalletConfig;
         const accessToken = Math.random().toString(36).substring(2, 7);
-        const addresses = {
-          solana: config.solana?.["mainnet-beta"]?.address,
-          base: config.evm?.base?.address,
-          polygon: config.evm?.polygon?.address,
-          monad: config.evm?.monad?.address,
-        };
+        const addresses = getWalletAddresses(config);
 
         setupAccountWithAddresses(tenant.name, accessToken, addresses).catch(
           (err: unknown) =>
@@ -1195,12 +1195,7 @@ adminRoutes.put(
     }
 
     if (newWalletConfig) {
-      const addresses = {
-        solana: newWalletConfig.solana?.["mainnet-beta"]?.address,
-        base: newWalletConfig.evm?.base?.address,
-        polygon: newWalletConfig.evm?.polygon?.address,
-        monad: newWalletConfig.evm?.monad?.address,
-      };
+      const addresses = getWalletAddresses(newWalletConfig);
 
       updateAccountAddresses(tenant.name, addresses).catch((err: unknown) =>
         logger.error(
@@ -1341,12 +1336,7 @@ adminRoutes.post("/tenants/:id/activate", async (c) => {
   const walletConfig = tenant.wallet_config as WalletConfig | null;
   if (walletConfig) {
     const accessToken = Math.random().toString(36).substring(2, 7);
-    const addresses = {
-      solana: walletConfig.solana?.["mainnet-beta"]?.address,
-      base: walletConfig.evm?.base?.address,
-      polygon: walletConfig.evm?.polygon?.address,
-      monad: walletConfig.evm?.monad?.address,
-    };
+    const addresses = getWalletAddresses(walletConfig);
 
     setupAccountWithAddresses(tenant.name, accessToken, addresses).catch(
       (err: unknown) =>
@@ -2137,33 +2127,6 @@ adminRoutes.get("/stats", async (c) => {
   });
   /* eslint-enable @typescript-eslint/no-unnecessary-type-conversion */
 });
-
-interface WalletConfig {
-  solana?: {
-    "mainnet-beta"?: {
-      address: string;
-      key: string;
-    };
-  };
-  evm?: {
-    base?: { address: string; key: string };
-    polygon?: { address: string; key: string };
-    monad?: { address: string; key: string };
-  };
-}
-
-function extractAddresses(walletConfig: WalletConfig | null): {
-  solana: string | null;
-  evm: string | null;
-} {
-  if (!walletConfig) {
-    return { solana: null, evm: null };
-  }
-  return {
-    solana: walletConfig.solana?.["mainnet-beta"]?.address ?? null,
-    evm: walletConfig.evm?.base?.address ?? null,
-  };
-}
 
 adminRoutes.get("/settings", async (c) => {
   const settings = await db

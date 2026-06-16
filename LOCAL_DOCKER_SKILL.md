@@ -114,8 +114,8 @@ then exercises free proxy routing through both local API nodes.
 
 ## Solana Network Selection
 
-The stack supports both Solana devnet and mainnet-beta. Devnet is the default
-when `SOLANA_NETWORK` is unset:
+The stack supports both Solana devnet and mainnet-beta. Docker Compose
+explicitly defaults local services to devnet when `SOLANA_NETWORK` is unset:
 
 ```bash
 SOLANA_NETWORK=devnet

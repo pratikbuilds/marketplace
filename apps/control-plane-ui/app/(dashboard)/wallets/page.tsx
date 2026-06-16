@@ -18,6 +18,7 @@ import {
 import { api } from "@/lib/api/client";
 import {
   buildAddressOnlyConfig,
+  extractSolanaAddress,
   isValidSolanaAddress,
   isValidEvmAddress,
 } from "@/lib/wallet";
@@ -31,6 +32,9 @@ import { QRCodeSVG } from "qrcode.react";
 interface WalletConfig {
   solana?: {
     "mainnet-beta"?: {
+      address: string;
+    };
+    devnet?: {
       address: string;
     };
   };
@@ -510,7 +514,7 @@ function extractAddresses(config: WalletConfig | null): {
 } {
   if (!config) return { solana: null, evm: null };
   return {
-    solana: config.solana?.["mainnet-beta"]?.address ?? null,
+    solana: extractSolanaAddress(config),
     evm: config.evm?.base?.address ?? null,
   };
 }

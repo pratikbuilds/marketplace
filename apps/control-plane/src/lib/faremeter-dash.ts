@@ -1,5 +1,12 @@
 import { logger } from "../logger.js";
 import { evm, solana } from "@faremeter/info";
+import {
+  getConfiguredSolanaCluster,
+  getFaremeterDashSolanaChain,
+} from "./solana-wallet.js";
+
+const SOLANA_CLUSTER = getConfiguredSolanaCluster();
+const SOLANA_DASH_CHAIN = getFaremeterDashSolanaChain(SOLANA_CLUSTER);
 
 // Known stablecoin addresses for filtering transactions.
 // Includes EURC for transaction display even though it's excluded from migration seeding
@@ -7,20 +14,20 @@ import { evm, solana } from "@faremeter/info";
 const KNOWN_STABLECOIN_ADDRESSES = new Set<string>(
   [
     // Solana stablecoins
-    solana.lookupKnownSPLToken("mainnet-beta", "USDC")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDT")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "PYUSD")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDG")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USD1")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USX")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "CASH")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "EURC")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "JupUSD")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDS")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDtb")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDu")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "USDGO")?.address,
-    solana.lookupKnownSPLToken("mainnet-beta", "FDUSD")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDC")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDT")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "PYUSD")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDG")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USD1")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USX")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "CASH")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "EURC")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "JupUSD")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDS")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDtb")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDu")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "USDGO")?.address,
+    solana.lookupKnownSPLToken(SOLANA_CLUSTER, "FDUSD")?.address,
     // EVM USDC
     evm.lookupKnownAsset("base", "USDC")?.address?.toLowerCase(),
     evm.lookupKnownAsset("eip155:137", "USDC")?.address?.toLowerCase(),
@@ -263,7 +270,7 @@ export async function setupAccountWithAddresses(
 
   if (addresses.solana) {
     trackingPromises.push(
-      createTrackedAddress(account.id, "solana", addresses.solana),
+      createTrackedAddress(account.id, SOLANA_DASH_CHAIN, addresses.solana),
     );
   }
 
@@ -314,7 +321,7 @@ export async function updateAccountAddresses(
 
   if (addresses.solana) {
     trackingPromises.push(
-      createTrackedAddress(account.id, "solana", addresses.solana),
+      createTrackedAddress(account.id, SOLANA_DASH_CHAIN, addresses.solana),
     );
   }
 

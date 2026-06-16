@@ -6,10 +6,20 @@ import { tokenRatesRoutes } from "./token-rates.js";
 import { seedTokenPricesForTenant } from "../lib/token-seed.js";
 import type { SupportedToken } from "../db/schema.js";
 
+const originalSolanaNetwork = process.env.SOLANA_NETWORK;
+
 const app = new Hono();
 app.route("/api/token-rates", tokenRatesRoutes);
 
 await setupTestSchema();
+
+t.teardown(() => {
+  if (originalSolanaNetwork === undefined) {
+    delete process.env.SOLANA_NETWORK;
+  } else {
+    process.env.SOLANA_NETWORK = originalSolanaNetwork;
+  }
+});
 
 // supported_tokens is seeded by setupTestSchema — re-seed if a test clears it
 async function reseedSupportedTokens() {
@@ -143,6 +153,74 @@ await t.test("seedTokenPricesForTenant", async (t) => {
       t.ok(symbols.includes("USDT:solana-mainnet-beta"));
       t.ok(symbols.includes("USDC:base"));
       t.notOk(symbols.includes("EURC:solana-mainnet-beta"));
+    },
+  );
+
+  await t.test(
+    "seeds only the configured Solana network from supported_tokens",
+    async (t) => {
+      t.teardown(() => {
+        if (originalSolanaNetwork === undefined) {
+          delete process.env.SOLANA_NETWORK;
+        } else {
+          process.env.SOLANA_NETWORK = originalSolanaNetwork;
+        }
+      });
+
+      process.env.SOLANA_NETWORK = "devnet";
+      await db
+        .insertInto("supported_tokens")
+        .values({
+          symbol: "USDC",
+          mint_address: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+          network: "solana-devnet",
+          is_usd_pegged: true,
+        })
+        .execute();
+
+      const org = await db
+        .insertInto("organizations")
+        .values({ name: "test-org-devnet", slug: "test-org-devnet" })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+
+      const wallet = await db
+        .insertInto("wallets")
+        .values({
+          organization_id: org.id,
+          name: "test",
+          wallet_config: "{}",
+          funding_status: "funded",
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+
+      const tenant = await db
+        .insertInto("tenants")
+        .values({
+          name: "test-tenant-devnet",
+          backend_url: "https://example.com",
+          organization_id: org.id,
+          wallet_id: wallet.id,
+          default_price: 10000,
+          default_scheme: "exact",
+        })
+        .returning("id")
+        .executeTakeFirstOrThrow();
+
+      await seedTokenPricesForTenant(db, tenant.id, 10000);
+
+      const prices = await db
+        .selectFrom("token_prices")
+        .selectAll()
+        .where("tenant_id", "=", tenant.id)
+        .execute();
+
+      const symbols = prices.map((p) => `${p.token_symbol}:${p.network}`);
+      t.ok(symbols.includes("USDC:solana-devnet"));
+      t.ok(symbols.includes("USDC:base"));
+      t.notOk(symbols.includes("USDC:solana-mainnet-beta"));
+      t.notOk(symbols.includes("USDT:solana-mainnet-beta"));
     },
   );
 
